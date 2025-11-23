@@ -252,6 +252,12 @@ const configuration = {
       EXPIRES_IN: process.env.AUTH_REFRESH_TOKEN_EXPIRES_IN || "30d",
       GRACE_PERIOD: process.env.AUTH_REFRESH_TOKEN_GRACE_PERIOD || "60s",
     } as const,
+      // When true, use Redis to store previous refresh-token hashes for the
+      // grace period instead of persisting them in the database (avoids migrations).
+      USE_REDIS_GRACE_PERIOD: parseBooleanEnvVariable(
+        process.env.AUTH_USE_REDIS_GRACE_PERIOD,
+        true,
+      ),
     API_KEY: {
       ENABLED: parseBooleanEnvVariable(process.env.AUTH_API_KEY_ENABLED),
     } as const,

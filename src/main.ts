@@ -12,6 +12,7 @@ import morgan from "morgan";
 //import { AsyncApiDocumentBuilder, AsyncApiModule } from "nestjs-asyncapi";
 
 import { Response } from "express";
+import Redis from "ioredis";
 import { AppModule } from "./app.module";
 import configuration, {
   getCensoredConfiguration,
@@ -20,6 +21,7 @@ import configuration, {
 import { LoggingExceptionFilter } from "./filters/http-exception.filter";
 import { default as logger, stream, default as winston } from "./logging";
 import { LegacyRoutesMiddleware } from "./middleware/legacy-routes.middleware";
+import { REDIS_CLIENT } from "./modules/cache/redis.module";
 import loadPlugins from "./plugin";
 
 async function bootstrap(): Promise<void> {
@@ -184,6 +186,19 @@ async function bootstrap(): Promise<void> {
   app.use("/api/health", (_req, res: Response) => {
     res.redirect(308, "/api/status");
   });
+
+  // Redis health-check (non-fatal)
+  try {
+    if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
+      const redisClient = app.get(REDIS_CLIENT) as Redis;
+      if (redisClient) {
+        const pong = await redisClient.ping();
+        logger.log({ context: "Initialization", message: `Redis ping successful: ${pong}` });
+      }
+    }
+  } catch (err) {
+    logger.warn({ context: "Initialization", message: "Redis ping failed", error: err });
+  }
 
   await app.listen(configuration.SERVER.PORT);
 
