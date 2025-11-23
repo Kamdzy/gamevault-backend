@@ -54,11 +54,6 @@ import { RefreshTokenStrategy } from "./strategies/refresh-token.strategy";
         ]
       : []),
 
-    // Apply throttling guard for auth module
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
 
     {
       provide: APP_GUARD,
