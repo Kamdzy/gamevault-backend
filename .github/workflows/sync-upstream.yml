@@ -1,0 +1,84 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Run every day at 2 AM UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.3.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/Phalcode/gamevault-backend.git || true
+          git fetch upstream
+
+      - name: Sync master branch
+        id: sync
+        run: |
+          git checkout master
+          git merge upstream/master --no-edit || {
+            echo "Merge conflict detected."
+            git merge --abort
+            echo "conflict=true" >> $GITHUB_OUTPUT
+            exit 1
+          }
+          echo "conflict=false" >> $GITHUB_OUTPUT
+
+      - name: Push changes
+        if: steps.sync.outputs.conflict == 'false'
+        run: |
+          git push origin master
+
+      - name: Send Discord notification on conflict
+        if: failure() && steps.sync.outputs.conflict == 'true'
+        run: |
+          UPSTREAM_COMMITS=$(git log HEAD..upstream/master --oneline --no-decorate | head -5)
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"⚠️ Fork Sync Conflict Detected\",
+                \"description\": \"Failed to automatically sync fork with upstream Phalcode/gamevault-backend due to merge conflicts.\",
+                \"color\": 15158332,
+                \"fields\": [
+                  {
+                    \"name\": \"Repository\",
+                    \"value\": \"[${{ github.repository }}](https://github.com/${{ github.repository }})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Workflow Run\",
+                    \"value\": \"[View Details](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Action Required\",
+                    \"value\": \"Manual merge required. Please resolve conflicts locally and push to master.\",
+                    \"inline\": false
+                  },
+                  {
+                    \"name\": \"Recent Upstream Commits\",
+                    \"value\": \"\`\`\`\n${UPSTREAM_COMMITS}\n\`\`\`\",
+                    \"inline\": false
+                  }
+                ],
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}
