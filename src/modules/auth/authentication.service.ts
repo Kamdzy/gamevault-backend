@@ -5,6 +5,7 @@ import {
   OnModuleInit,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
+import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash } from "crypto";
 import ms, { StringValue } from "ms";
@@ -30,6 +31,7 @@ export class AuthenticationService implements OnModuleInit {
 
   async onModuleInit() {
     await this.cleanupOldSessions();
+    await this.cleanupExpiredGracePeriodTokens();
   }
 
   private async cleanupOldSessions() {
@@ -154,6 +156,13 @@ export class AuthenticationService implements OnModuleInit {
       },
     );
 
+    // Store old token in previous fields (grace period)
+    session.previous_refresh_token_hash = session.refresh_token_hash;
+    session.previous_token_expires_at = new Date(
+      Date.now() +
+        ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue),
+    );
+
     // Update session with new refresh token
     session.refresh_token_hash = createHash("sha256")
       .update(newRefreshToken)
@@ -210,14 +219,29 @@ export class AuthenticationService implements OnModuleInit {
       .update(refreshToken)
       .digest("hex");
 
-    const session = await this.sessionRepository.findOne({
+    // Check if token matches current refresh token
+    const currentSession = await this.sessionRepository.findOne({
       where: {
         refresh_token_hash: refreshTokenHash,
         revoked: false,
         expires_at: MoreThan(new Date()),
       },
     });
-    return !session;
+
+    if (currentSession) {
+      return false;
+    }
+
+    // Check if token matches previous refresh token (grace period)
+    const previousSession = await this.sessionRepository.findOne({
+      where: {
+        previous_refresh_token_hash: refreshTokenHash,
+        revoked: false,
+        previous_token_expires_at: MoreThan(new Date()),
+      },
+    });
+
+    return !previousSession;
   }
 
   async getUserSessions(user: GamevaultUser): Promise<Session[]> {
@@ -248,5 +272,30 @@ export class AuthenticationService implements OnModuleInit {
       message: "All active sessions revoked for user",
       user_id: user.id,
     });
+  }
+
+  /**
+   * Cleans up expired grace period tokens from sessions.
+   * Runs every hour to remove old token hashes that are no longer needed.
+   */
+  @Cron("0 * * * *")
+  async cleanupExpiredGracePeriodTokens(): Promise<void> {
+    const result = await this.sessionRepository
+      .createQueryBuilder()
+      .update(Session)
+      .set({
+        previous_refresh_token_hash: null,
+        previous_token_expires_at: null,
+      })
+      .where("previous_token_expires_at IS NOT NULL")
+      .andWhere("previous_token_expires_at <= :now", { now: new Date() })
+      .execute();
+
+    if (result.affected > 0) {
+      this.logger.debug({
+        message: "Cleaned up expired grace period tokens",
+        count: result.affected,
+      });
+    }
   }
 }
