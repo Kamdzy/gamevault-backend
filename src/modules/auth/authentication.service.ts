@@ -25,6 +25,7 @@ import { Session } from "./session.entity";
 @Injectable()
 export class AuthenticationService implements OnModuleInit {
   private readonly logger = new Logger(this.constructor.name);
+  private readonly fallbackCache = new InMemoryTtlCache();
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
@@ -32,8 +33,6 @@ export class AuthenticationService implements OnModuleInit {
     private readonly sessionRepository: Repository<Session>,
     @Inject(REDIS_CLIENT)
     private readonly redisClient?: Redis,
-    // in-memory fallback for degraded mode
-    private readonly fallbackCache: InMemoryTtlCache = new InMemoryTtlCache(),
   ) {}
 
   async onModuleInit() {
@@ -164,26 +163,28 @@ export class AuthenticationService implements OnModuleInit {
 
     // Store old token in Redis (grace period) to avoid schema changes.
     // Key format: prev:{sha256hex} -> "1"
-    try {
-      const ttlSeconds = Math.ceil(
-        (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000,
-      );
-      if (this.redisClient && ttlSeconds > 0) {
-        await this.redisClient.set(
-          `prev:${session.refresh_token_hash}`,
-          "1",
-          "EX",
-          ttlSeconds,
+    if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
+      try {
+        const ttlSeconds = Math.ceil(
+          (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000,
         );
-      } else if (ttlSeconds > 0) {
-        // store in in-memory fallback
+        if (this.redisClient && ttlSeconds > 0) {
+          await this.redisClient.set(
+            `prev:${session.refresh_token_hash}`,
+            "1",
+            "EX",
+            ttlSeconds,
+          );
+        } else if (ttlSeconds > 0) {
+          // store in in-memory fallback
+          this.fallbackCache.set(`prev:${session.refresh_token_hash}`, ttlSeconds);
+        }
+      } catch (err) {
+        // Fallback: if Redis fails, store in-memory
+        const ttlSeconds = Math.ceil((ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000);
         this.fallbackCache.set(`prev:${session.refresh_token_hash}`, ttlSeconds);
+        this.logger.warn({ message: "Redis unavailable, using in-memory grace-period store", err });
       }
-    } catch (err) {
-      // Fallback: if Redis fails, store in-memory
-      const ttlSeconds = Math.ceil((ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000);
-      this.fallbackCache.set(`prev:${session.refresh_token_hash}`, ttlSeconds);
-      this.logger.warn({ message: "Redis unavailable, using in-memory grace-period store", err });
     }
 
     // Update session with new refresh token
@@ -254,14 +255,16 @@ export class AuthenticationService implements OnModuleInit {
     if (currentSession) {
       return false;
     }
-    // If DB lookup failed, check Redis for previous token (grace period)
+    // If DB lookup failed, check Redis/in-memory fallback for previous token (grace period)
     try {
-      if (this.redisClient) {
-        const exists = await this.redisClient.exists(`prev:${refreshTokenHash}`);
-        if (exists) return false;
+      if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
+        if (this.redisClient) {
+          const exists = await this.redisClient.exists(`prev:${refreshTokenHash}`);
+          if (exists) return false;
+        }
+        // Check in-memory fallback
+        if (this.fallbackCache.has(`prev:${refreshTokenHash}`)) return false;
       }
-      // Check in-memory fallback
-      if (this.fallbackCache.has(`prev:${refreshTokenHash}`)) return false;
     } catch (err) {
       this.logger.warn({ message: "Redis check failed in isTokenRevoked", err });
     }
