@@ -577,9 +577,9 @@ export class FilesService implements OnApplicationBootstrap {
         entries
           .filter((e) => e.isFile() && this.isValidFilePath(e.name))
           .map(async (e) => {
-            const path = join(e.path, e.name);
-            const { size } = await stat(path);
-            return { path, size: BigInt(size) };
+            const fullPath = join(configuration.VOLUMES.FILES, e.name);
+            const { size } = await stat(fullPath);
+            return { path: fullPath, size: BigInt(size) };
           }),
       );
     } catch (error) {
