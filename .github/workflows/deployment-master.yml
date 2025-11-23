@@ -9,11 +9,36 @@ on:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+
+      - name: Ensure pnpm lockfile matches package.json
+        # This step regenerates pnpm-lock.yaml (lockfile-only) and commits it if changed.
+        # It fixes CI failures when package.json was updated by automation in PRs.
+        env:
+          GIT_AUTHOR_NAME: "github-actions[bot]"
+          GIT_AUTHOR_EMAIL: "github-actions[bot]@users.noreply.github.com"
+        run: |
+          set -euo pipefail
+          # Install pnpm via corepack to match local version used in Docker
+          corepack enable
+          corepack prepare pnpm@10.12.1 --activate
+          pnpm install --lockfile-only
+          if git diff --quiet -- pnpm-lock.yaml; then
+            echo "pnpm-lock.yaml is up-to-date"
+          else
+            git config user.email "$GIT_AUTHOR_EMAIL"
+            git config user.name "$GIT_AUTHOR_NAME"
+            git add pnpm-lock.yaml
+            git commit -m "chore: update pnpm-lock.yaml for new deps [ci skip]"
+            # push back to the same branch that triggered the workflow
+            git push origin HEAD:${{ github.ref_name }}
+          fi
         
       - name: Fetch Current Package Version
         id: package-version
