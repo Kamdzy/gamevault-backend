@@ -32,12 +32,16 @@ jobs:
           if git diff --quiet -- pnpm-lock.yaml; then
             echo "pnpm-lock.yaml is up-to-date"
           else
-            git config user.email "$GIT_AUTHOR_EMAIL"
-            git config user.name "$GIT_AUTHOR_NAME"
-            git add pnpm-lock.yaml
-            git commit -m "chore: update pnpm-lock.yaml for new deps [ci skip]"
-            # push back to the same branch that triggered the workflow
-            git push origin HEAD:${{ github.ref_name }}
+              git config user.email "$GIT_AUTHOR_EMAIL"
+              git config user.name "$GIT_AUTHOR_NAME"
+              git add pnpm-lock.yaml
+              git commit -m "chore: update pnpm-lock.yaml for new deps [ci skip]"
+              # push back to the same branch that triggered the workflow
+              git push origin HEAD:${{ github.ref_name }}
+              # Refresh the workspace in this job so subsequent steps (docker build) use the updated lockfile
+              BRANCH="${{ github.ref_name }}"
+              git fetch origin "$BRANCH"
+              git reset --hard "origin/$BRANCH"
           fi
         
       - name: Fetch Current Package Version
