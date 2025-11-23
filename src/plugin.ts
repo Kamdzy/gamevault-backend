@@ -41,9 +41,10 @@ export default async function loadPlugins() {
     );
 
     const plugins = await Promise.all(
-      pluginModuleFiles.map(
-        (file) => import(resolve(join(file.path, file.name))),
-      ),
+      pluginModuleFiles.map(file => {
+        const pluginPath = join(injectDir, file.name);
+        return import(pluginPath);
+      })
     );
 
     logger.log({
