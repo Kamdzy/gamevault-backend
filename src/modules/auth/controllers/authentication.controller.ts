@@ -1,21 +1,22 @@
 import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  Logger,
-  Post,
-  Request,
-  UseGuards,
+    BadRequestException,
+    Body,
+    Controller,
+    Get,
+    Logger,
+    Post,
+    Request,
+    UseGuards,
 } from "@nestjs/common";
 import {
-  ApiBearerAuth,
-  ApiBody,
-  ApiOkResponse,
-  ApiOperation,
-  ApiSecurity,
-  ApiTags,
+    ApiBearerAuth,
+    ApiBody,
+    ApiOkResponse,
+    ApiOperation,
+    ApiSecurity,
+    ApiTags,
 } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { SkipGuards } from "../../../decorators/skip-guards.decorator";
 import { GamevaultUser } from "../../users/gamevault-user.entity";
 import { AuthenticationService } from "../authentication.service";
@@ -33,6 +34,7 @@ export class GamevaultJwtController {
   constructor(private readonly authService: AuthenticationService) {}
 
   @Post("refresh")
+  @Throttle(5, 60)
   @UseGuards(RefreshTokenGuard)
   @SkipGuards()
   @ApiOperation({

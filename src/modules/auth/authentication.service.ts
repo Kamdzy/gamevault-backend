@@ -1,16 +1,19 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   OnModuleInit,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash } from "crypto";
+import Redis from "ioredis";
 import ms, { StringValue } from "ms";
 import { LessThan, MoreThan, Repository } from "typeorm";
 import configuration from "../../configuration";
+import { InMemoryTtlCache } from "../cache/in-memory-cache";
+import { REDIS_CLIENT } from "../cache/redis.module";
 import { GamevaultUser } from "../users/gamevault-user.entity";
 import { RegisterUserDto } from "../users/models/register-user.dto";
 import { UsersService } from "../users/users.service";
@@ -27,11 +30,14 @@ export class AuthenticationService implements OnModuleInit {
     private readonly jwtService: JwtService,
     @InjectRepository(Session)
     private readonly sessionRepository: Repository<Session>,
+    @Inject(REDIS_CLIENT)
+    private readonly redisClient?: Redis,
+    // in-memory fallback for degraded mode
+    private readonly fallbackCache: InMemoryTtlCache = new InMemoryTtlCache(),
   ) {}
 
   async onModuleInit() {
     await this.cleanupOldSessions();
-    await this.cleanupExpiredGracePeriodTokens();
   }
 
   private async cleanupOldSessions() {
@@ -156,12 +162,29 @@ export class AuthenticationService implements OnModuleInit {
       },
     );
 
-    // Store old token in previous fields (grace period)
-    session.previous_refresh_token_hash = session.refresh_token_hash;
-    session.previous_token_expires_at = new Date(
-      Date.now() +
-        ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue),
-    );
+    // Store old token in Redis (grace period) to avoid schema changes.
+    // Key format: prev:{sha256hex} -> "1"
+    try {
+      const ttlSeconds = Math.ceil(
+        (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000,
+      );
+      if (this.redisClient && ttlSeconds > 0) {
+        await this.redisClient.set(
+          `prev:${session.refresh_token_hash}`,
+          "1",
+          "EX",
+          ttlSeconds,
+        );
+      } else if (ttlSeconds > 0) {
+        // store in in-memory fallback
+        this.fallbackCache.set(`prev:${session.refresh_token_hash}`, ttlSeconds);
+      }
+    } catch (err) {
+      // Fallback: if Redis fails, store in-memory
+      const ttlSeconds = Math.ceil((ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000);
+      this.fallbackCache.set(`prev:${session.refresh_token_hash}`, ttlSeconds);
+      this.logger.warn({ message: "Redis unavailable, using in-memory grace-period store", err });
+    }
 
     // Update session with new refresh token
     session.refresh_token_hash = createHash("sha256")
@@ -231,17 +254,20 @@ export class AuthenticationService implements OnModuleInit {
     if (currentSession) {
       return false;
     }
+    // If DB lookup failed, check Redis for previous token (grace period)
+    try {
+      if (this.redisClient) {
+        const exists = await this.redisClient.exists(`prev:${refreshTokenHash}`);
+        if (exists) return false;
+      }
+      // Check in-memory fallback
+      if (this.fallbackCache.has(`prev:${refreshTokenHash}`)) return false;
+    } catch (err) {
+      this.logger.warn({ message: "Redis check failed in isTokenRevoked", err });
+    }
 
-    // Check if token matches previous refresh token (grace period)
-    const previousSession = await this.sessionRepository.findOne({
-      where: {
-        previous_refresh_token_hash: refreshTokenHash,
-        revoked: false,
-        previous_token_expires_at: MoreThan(new Date()),
-      },
-    });
-
-    return !previousSession;
+    // No matching current or previous token found
+    return true;
   }
 
   async getUserSessions(user: GamevaultUser): Promise<Session[]> {
@@ -272,30 +298,5 @@ export class AuthenticationService implements OnModuleInit {
       message: "All active sessions revoked for user",
       user_id: user.id,
     });
-  }
-
-  /**
-   * Cleans up expired grace period tokens from sessions.
-   * Runs every hour to remove old token hashes that are no longer needed.
-   */
-  @Cron("0 * * * *")
-  async cleanupExpiredGracePeriodTokens(): Promise<void> {
-    const result = await this.sessionRepository
-      .createQueryBuilder()
-      .update(Session)
-      .set({
-        previous_refresh_token_hash: null,
-        previous_token_expires_at: null,
-      })
-      .where("previous_token_expires_at IS NOT NULL")
-      .andWhere("previous_token_expires_at <= :now", { now: new Date() })
-      .execute();
-
-    if (result.affected > 0) {
-      this.logger.debug({
-        message: "Cleaned up expired grace period tokens",
-        count: result.affected,
-      });
-    }
   }
 }
