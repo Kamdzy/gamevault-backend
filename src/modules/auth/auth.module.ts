@@ -1,9 +1,11 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtModule } from "@nestjs/jwt";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { StringValue } from "ms";
 import configuration from "../../configuration";
+import { RedisModule } from "../cache/redis.module";
 import { UsersModule } from "../users/users.module";
 import { AuthenticationService } from "./authentication.service";
 import { GamevaultJwtController } from "./controllers/authentication.controller";
@@ -21,6 +23,8 @@ import { RefreshTokenStrategy } from "./strategies/refresh-token.strategy";
 @Module({
   imports: [
     UsersModule,
+    RedisModule,
+    ThrottlerModule.forRoot({ ttl: 60, limit: 5 }),
     TypeOrmModule.forFeature([Session]),
     JwtModule.register({
       global: true,
@@ -49,6 +53,12 @@ import { RefreshTokenStrategy } from "./strategies/refresh-token.strategy";
           },
         ]
       : []),
+
+    // Apply throttling guard for auth module
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
 
     {
       provide: APP_GUARD,

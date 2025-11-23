@@ -7,7 +7,6 @@ import { GamevaultUser } from "../users/gamevault-user.entity";
 @Entity()
 @Index(["user", "revoked", "expires_at"]) // For querying active sessions
 @Index(["refresh_token_hash"]) // For token revocation checks
-@Index(["previous_refresh_token_hash"]) // For grace period token checks
 export class Session extends DatabaseEntity {
   @ManyToOne(() => GamevaultUser, (user) => user.sessions, {
     onDelete: "CASCADE",
@@ -25,23 +24,6 @@ export class Session extends DatabaseEntity {
     example: "fd9c4f417fb494aeacef28a70eba95128d9f2521374852cdb12ecb746888b892",
   })
   refresh_token_hash: string;
-
-  @Column({ nullable: true })
-  @ApiProperty({
-    description:
-      "SHA-256 hash of the previous refresh token (valid during grace period)",
-    example: "fd9c4f417fb494aeacef28a70eba95128d9f2521374852cdb12ecb746888b892",
-    required: false,
-  })
-  previous_refresh_token_hash: string | null;
-
-  @Column({ nullable: true })
-  @ApiProperty({
-    description: "When the previous refresh token expires (grace period end)",
-    example: "2024-12-31T23:59:59.999Z",
-    required: false,
-  })
-  previous_token_expires_at: Date | null;
 
   @Column({ default: false })
   @ApiProperty({
