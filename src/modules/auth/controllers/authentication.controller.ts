@@ -16,7 +16,7 @@ import {
     ApiSecurity,
     ApiTags,
 } from "@nestjs/swagger";
-import { Throttle } from "@nestjs/throttler";
+import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import { SkipGuards } from "../../../decorators/skip-guards.decorator";
 import { GamevaultUser } from "../../users/gamevault-user.entity";
 import { AuthenticationService } from "../authentication.service";
@@ -35,7 +35,7 @@ export class GamevaultJwtController {
 
   @Post("refresh")
   @Throttle(5, 60)
-  @UseGuards(RefreshTokenGuard)
+  @UseGuards(ThrottlerGuard, RefreshTokenGuard)
   @SkipGuards()
   @ApiOperation({
     summary: "Refreshes the access token and extends the refresh token",

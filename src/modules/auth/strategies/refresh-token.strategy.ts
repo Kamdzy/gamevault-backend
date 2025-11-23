@@ -31,9 +31,13 @@ export class RefreshTokenStrategy extends PassportStrategy(
     const token = request.headers.authorization.split(" ")[1];
     const isRevoked = await this.authService.isTokenRevoked(token);
     if (isRevoked) {
-      throw new UnauthorizedException(
+      const ex = new UnauthorizedException(
         "Authentication Failed: token has been revoked",
       );
+      // Mark this exception so the global exception filter can suppress logging
+      // for expected revoked-token attempts (to avoid log spam).
+      (ex as any).suppressLogging = true;
+      throw ex;
     }
 
     return await this.usersService.findOneByUsernameOrFail(

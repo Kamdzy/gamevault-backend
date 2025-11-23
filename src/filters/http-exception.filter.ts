@@ -19,6 +19,14 @@ export class LoggingExceptionFilter implements ExceptionFilter {
     const httpStatusCode =
       error instanceof HttpException ? error.getStatus() : 500;
     if (error instanceof HttpException) {
+      // If an exception has been marked to suppress logging, just return
+      // the response without emitting a warn/error log. This is used for
+      // expected client-side conditions (e.g. revoked refresh tokens)
+      // that would otherwise spam logs.
+      if ((error as any).suppressLogging) {
+        response.status(httpStatusCode).json(error.getResponse());
+        return;
+      }
       if (httpStatusCode >= 400 && httpStatusCode < 500) {
         this.logger.warn({
           message: `${error.name} occurred.`,
