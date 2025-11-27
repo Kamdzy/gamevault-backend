@@ -302,4 +302,17 @@ export class AuthenticationService implements OnModuleInit {
       user_id: user.id,
     });
   }
+
+  async incrementAuthFailure(clientKey: string) {
+    if (this.redisClient) {
+      await this.redisClient.incr(`auth_failures:${clientKey}`);
+      await this.redisClient.expire(`auth_failures:${clientKey}`, 3600); // 1 hour
+    }
+  }
+
+  async resetAuthFailure(clientKey: string) {
+    if (this.redisClient) {
+      await this.redisClient.del(`auth_failures:${clientKey}`);
+    }
+  }
 }
