@@ -44,6 +44,16 @@ jobs:
               git reset --hard "origin/$BRANCH"
           fi
         
+      - name: Dynamically add cheerio
+        run: |
+          set -euo pipefail
+          # Install pnpm if not already available
+          corepack enable
+          corepack prepare pnpm@10.12.1 --activate
+          # Add cheerio temporarily for the build (this modifies package.json and lockfile in the workspace)
+          pnpm add cheerio
+          # Note: The Docker build will include the updated node_modules with cheerio
+
       - name: Fetch Current Package Version
         id: package-version
         uses: martinbeentjes/npm-get-version-action@v1.3.1
