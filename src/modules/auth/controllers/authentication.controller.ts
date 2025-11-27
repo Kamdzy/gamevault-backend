@@ -34,6 +34,40 @@ export class GamevaultJwtController {
   private readonly logger = new Logger(this.constructor.name);
   constructor(private readonly authService: AuthenticationService) {}
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private getClientKey(req: Record<string, any>): string {
+    if (req.user?.id) {
+      return req.user.id;
+    }
+
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (authHeader) {
+      if (authHeader.startsWith("Bearer ")) {
+        const token = authHeader.slice(7);
+        try {
+          const payload = JSON.parse(
+            Buffer.from(token.split(".")[1], "base64").toString(),
+          );
+          return (
+            payload.sub ||
+            payload.userId ||
+            payload.id ||
+            `bearer:${token.slice(-10)}`
+          );
+        } catch {
+          return `bearer:${token.slice(-10)}`;
+        }
+      } else if (authHeader.startsWith("Basic ")) {
+        const credentials = Buffer.from(authHeader.slice(6), "base64")
+          .toString()
+          .split(":");
+        return credentials[0] || `basic:${authHeader.slice(-10)}`;
+      }
+    }
+
+    return req.headers["x-api-key"] || req.ip;
+  }
+
   @Post("refresh")
   @Throttle(5, 60)
   @UseGuards(CustomThrottlerGuard, RefreshTokenGuard)
@@ -57,12 +91,26 @@ export class GamevaultJwtController {
     if (!refreshToken) {
       throw new BadRequestException("No refresh token provided");
     }
-    return this.authService.refresh(
+
+    const clientKey = this.getClientKey(req);
+    try {
+      const result = await this.authService.refresh(
       req.user,
       req.ip,
       req.headers["user-agent"] || "Unknown User Agent",
       refreshToken,
     );
+      await this.authService.resetAuthFailure(clientKey);
+      return result;
+    } catch (e) {
+      if (
+        e instanceof BadRequestException &&
+        e.message === "Invalid or expired refresh token"
+      ) {
+        await this.authService.incrementAuthFailure(clientKey);
+      }
+      throw e;
+    }
   }
 
   @Post("revoke")
