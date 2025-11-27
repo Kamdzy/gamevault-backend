@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - hotfix
+  workflow_dispatch:
 
 jobs:
   docker:
