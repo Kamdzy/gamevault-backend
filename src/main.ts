@@ -23,6 +23,7 @@ import { default as logger, stream, default as winston } from "./logging";
 import { LegacyRoutesMiddleware } from "./middleware/legacy-routes.middleware";
 import { REDIS_CLIENT } from "./modules/cache/redis.module";
 import loadPlugins from "./plugin";
+import { EndpointMemoryTrackerInterceptor } from "./interceptors/endpoint-memory-tracker.interceptor";
 
 async function bootstrap(): Promise<void> {
   // Load Modules & Plugins
@@ -199,6 +200,9 @@ async function bootstrap(): Promise<void> {
   } catch (err) {
     logger.warn({ context: "Initialization", message: "Redis ping failed", error: err });
   }
+
+  // Global Endpoint Memory Tracker
+  app.useGlobalInterceptors(new EndpointMemoryTrackerInterceptor());
 
   await app.listen(configuration.SERVER.PORT);
 
