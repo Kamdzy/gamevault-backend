@@ -6,6 +6,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { StringValue } from "ms";
 import configuration from "../../configuration";
 import { RedisModule } from "../cache/redis.module";
+import { GamevaultUser } from "../users/gamevault-user.entity";
 import { UsersModule } from "../users/users.module";
 import { AuthenticationService } from "./authentication.service";
 import { GamevaultJwtController } from "./controllers/authentication.controller";
@@ -28,7 +29,7 @@ import { RefreshTokenStrategy } from "./strategies/refresh-token.strategy";
       ttl: 60,
       limit: 5,
     }),
-    TypeOrmModule.forFeature([Session]),
+    TypeOrmModule.forFeature([Session, GamevaultUser]),
     JwtModule.register({
       global: true,
       secret: configuration.AUTH.ACCESS_TOKEN.SECRET,
