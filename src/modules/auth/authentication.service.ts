@@ -27,6 +27,8 @@ import { Session } from "./session.entity";
 export class AuthenticationService implements OnModuleInit {
   private readonly logger = new Logger(this.constructor.name);
   private readonly fallbackCache = new InMemoryTtlCache();
+  private cleanupInterval: NodeJS.Timeout | null = null;
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
@@ -37,29 +39,70 @@ export class AuthenticationService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    // Run initial cleanup
     await this.cleanupOldSessions();
+    // Schedule regular cleanup every 5 minutes
+    this.cleanupInterval = setInterval(
+      async () => {
+        await this.cleanupOldSessions();
+      },
+      5 * 60 * 1000,
+    ); // 5 minutes
+  }
+
+  async onModuleDestroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
   }
 
   private async cleanupOldSessions() {
-    const expiryTime = ms(
-      configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
-    );
-    const cutoffDate = new Date(Date.now() - expiryTime * 3);
-
-    const result = await this.sessionRepository.remove(
-      await this.sessionRepository.find({
-        where: {
-          expires_at: LessThan(cutoffDate),
-        },
-      }),
-    );
-
-    this.logger.debug({
-      message: "Cleaned up expired sessions",
-      deletedCount: result.length,
-      cutoffDate,
-      expiryTime,
-    });
+    try {
+      const expiryTime = ms(
+        configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
+      );
+      // More aggressive: delete sessions older than 1x expiry (not 3x)
+      const cutoffDate = new Date(Date.now() - expiryTime);
+      // Delete in batches to avoid memory spikes
+      const batchSize = 100;
+      let deletedTotal = 0;
+      while (true) {
+        const sessionsToDelete = await this.sessionRepository.find({
+          where: {
+            expires_at: LessThan(cutoffDate),
+          },
+          take: batchSize,
+        });
+        if (sessionsToDelete.length === 0) {
+          break;
+        }
+        await this.sessionRepository.remove(sessionsToDelete);
+        deletedTotal += sessionsToDelete.length;
+        // Give DB a breather between batches
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      // Also cleanup revoked sessions older than 24 hours
+      const revokedCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const revokedDeleted = await this.sessionRepository.delete({
+        revoked: true,
+        updated_at: LessThan(revokedCutoff),
+      });
+      this.logger.debug({
+        message: "Cleaned up expired sessions",
+        expiredDeleted: deletedTotal,
+        revokedDeleted: revokedDeleted.affected || 0,
+        cutoffDate,
+      });
+      // Force GC after cleanup
+      if (global.gc) {
+        setImmediate(() => global.gc());
+      }
+    } catch (error) {
+      this.logger.error({
+        message: "Failed to cleanup sessions",
+        error: error instanceof Error ? error.message : error,
+      });
+    }
   }
 
   async login(
@@ -70,6 +113,37 @@ export class AuthenticationService implements OnModuleInit {
     const user = await this.usersService.findOneByUsernameOrFail(
       requestUser.username,
     );
+
+    // Limit sessions per user to prevent unbounded growth
+    const MAX_SESSIONS_PER_USER = 10;
+    const userSessions = await this.sessionRepository.count({
+      where: {
+        user: { id: user.id },
+        revoked: false,
+      },
+    });
+    if (userSessions >= MAX_SESSIONS_PER_USER) {
+      const oldestSessions = await this.sessionRepository.find({
+        where: {
+          user: { id: user.id },
+          revoked: false,
+        },
+        order: {
+          created_at: "ASC",
+        },
+        take: userSessions - MAX_SESSIONS_PER_USER + 1,
+      });
+      // Revoke them (don't delete to maintain audit trail)
+      await this.sessionRepository.update(
+        oldestSessions.map((s) => s.id),
+        { revoked: true },
+      );
+      this.logger.debug({
+        message: "Revoked old sessions for user",
+        user_id: user.id,
+        revoked_count: oldestSessions.length,
+      });
+    }
 
     const payload: GamevaultJwtPayload = {
       sub: user.id.toString(),

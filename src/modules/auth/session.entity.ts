@@ -7,6 +7,8 @@ import { GamevaultUser } from "../users/gamevault-user.entity";
 @Entity()
 @Index(["user", "revoked", "expires_at"]) // For querying active sessions
 @Index(["refresh_token_hash"]) // For token revocation checks
+@Index(["expires_at"]) // For expiry cleanup
+@Index(["updated_at"]) // For revoked cleanup
 export class Session extends DatabaseEntity {
   @ManyToOne(() => GamevaultUser, (user) => user.sessions, {
     onDelete: "CASCADE",
