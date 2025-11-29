@@ -5,7 +5,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
-  UnauthorizedException, // ADD THIS
+  UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -23,9 +23,12 @@ import { GamevaultJwtPayload } from "./models/gamevault-jwt-payload.interface";
 import { RefreshTokenDto } from "./models/refresh-token.dto";
 import { TokenPairDto } from "./models/token-pair.dto";
 import { Session } from "./session.entity";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const PQueue = require("p-queue");
 
 @Injectable()
 export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
+  private readonly authQueue = new PQueue({ concurrency: 2, timeout: 10000 });
   private readonly logger = new Logger(this.constructor.name);
   private readonly fallbackCache = new InMemoryTtlCache();
   private cleanupInterval: NodeJS.Timeout | null = null;
@@ -126,84 +129,93 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     ipAddress: string,
     userAgent: string,
   ): Promise<TokenPairDto> {
-    const user = await this.usersService.findOneByUsernameOrFail(
-      requestUser.username,
-    );
+    return this.authQueue.add(async () => {
+      try {
+        const user = await this.usersService.findOneByUsernameOrFail(
+          requestUser.username,
+        );
 
-    // Limit sessions per user to prevent unbounded growth
-    const MAX_SESSIONS_PER_USER = 10;
-    const userSessions = await this.sessionRepository.count({
-      where: {
-        user: { id: user.id },
-        revoked: false,
-      },
+        // Limit sessions per user to prevent unbounded growth
+        const MAX_SESSIONS_PER_USER = 10;
+        const userSessions = await this.sessionRepository.count({
+          where: {
+            user: { id: user.id },
+            revoked: false,
+          },
+        });
+        if (userSessions >= MAX_SESSIONS_PER_USER) {
+          const oldestSessions = await this.sessionRepository.find({
+            where: {
+              user: { id: user.id },
+              revoked: false,
+            },
+            order: {
+              created_at: "ASC",
+            },
+            take: userSessions - MAX_SESSIONS_PER_USER + 1,
+          });
+          await this.sessionRepository.update(
+            oldestSessions.map((s) => s.id),
+            { revoked: true },
+          );
+          this.logger.debug({
+            message: "Revoked old sessions for user",
+            user_id: user.id,
+            revoked_count: oldestSessions.length,
+          });
+        }
+
+        const payload: GamevaultJwtPayload = {
+          sub: user.id.toString(),
+          name:
+            [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
+          given_name: user.first_name,
+          family_name: user.last_name,
+          preferred_username: user.username,
+          email: user.email,
+          role: user.role.toString(),
+          birthdate: user.birth_date?.toISOString(),
+        };
+
+        const refreshToken = this.jwtService.sign(
+          { payload },
+          {
+            secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
+            expiresIn: configuration.AUTH.REFRESH_TOKEN
+              .EXPIRES_IN as StringValue,
+          },
+        );
+
+        // Create a new session
+        const session = new Session();
+        session.user = user;
+        session.refresh_token_hash = createHash("sha256")
+          .update(refreshToken)
+          .digest("hex");
+        session.expires_at = new Date(
+          Date.now() +
+            ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
+        );
+        session.ip_address = ipAddress;
+        session.user_agent = userAgent;
+        await this.sessionRepository.save(session);
+
+        const loginDto: TokenPairDto = {
+          access_token: this.jwtService.sign({ payload }),
+          refresh_token: refreshToken,
+        };
+
+        this.logger.debug({
+          message: "Created new session",
+          session,
+        });
+        return loginDto;
+      } finally {
+        if (global.gc) {
+          setImmediate(() => global.gc());
+        }
+      }
     });
-    if (userSessions >= MAX_SESSIONS_PER_USER) {
-      const oldestSessions = await this.sessionRepository.find({
-        where: {
-          user: { id: user.id },
-          revoked: false,
-        },
-        order: {
-          created_at: "ASC",
-        },
-        take: userSessions - MAX_SESSIONS_PER_USER + 1,
-      });
-      // Revoke them (don't delete to maintain audit trail)
-      await this.sessionRepository.update(
-        oldestSessions.map((s) => s.id),
-        { revoked: true },
-      );
-      this.logger.debug({
-        message: "Revoked old sessions for user",
-        user_id: user.id,
-        revoked_count: oldestSessions.length,
-      });
-    }
-
-    const payload: GamevaultJwtPayload = {
-      sub: user.id.toString(),
-      name: [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
-      given_name: user.first_name,
-      family_name: user.last_name,
-      preferred_username: user.username,
-      email: user.email,
-      role: user.role.toString(),
-      birthdate: user.birth_date?.toISOString(),
-    };
-
-    const refreshToken = this.jwtService.sign(
-      { payload },
-      {
-        secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
-        expiresIn: configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
-      },
-    );
-
-    // Create a new session
-    const session = new Session();
-    session.user = user;
-    session.refresh_token_hash = createHash("sha256")
-      .update(refreshToken)
-      .digest("hex");
-    session.expires_at = new Date(
-      Date.now() +
-        ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
-    );
-    session.ip_address = ipAddress;
-    session.user_agent = userAgent;
-    await this.sessionRepository.save(session);
-
-    const loginDto: TokenPairDto = {
-      access_token: this.jwtService.sign({ payload }),
-      refresh_token: refreshToken,
-    };
-
-    this.logger.debug({
-      message: "Created new session",
-      session,
-    });
-    return loginDto;
   }
 
   async refresh(
@@ -212,97 +224,104 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     userAgent: string,
     currentRefreshToken: string,
   ): Promise<TokenPairDto> {
-    this.logger.debug(`Refreshing token for user ${user.username}`);
-    let session: Session | null = null;
-    try {
-      // Find and update existing session
-      const refreshTokenHash = createHash("sha256")
-        .update(currentRefreshToken)
-        .digest("hex");
-      session = await this.sessionRepository.findOne({
-        where: {
-          user: { id: user.id },
-          refresh_token_hash: refreshTokenHash,
-          revoked: false,
-          expires_at: MoreThan(new Date()),
-        },
-      });
-      if (!session) {
-        throw new UnauthorizedException("Invalid or expired refresh token");
-      }
-      // Generate new tokens
-      const payload: GamevaultJwtPayload = {
-        sub: user.id.toString(),
-        name:
-          [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
-        given_name: user.first_name,
-        family_name: user.last_name,
-        preferred_username: user.username,
-        email: user.email,
-        role: user.role.toString(),
-        birthdate: user.birth_date?.toISOString(),
-      };
-      const newRefreshToken = this.jwtService.sign(
-        { payload },
-        {
-          secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
-          expiresIn: configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
-        },
-      );
-      // Store old token in Redis (grace period) to avoid schema changes.
-      if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
-        try {
-          const ttlSeconds = Math.ceil(
-            (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
-              0) / 1000,
-          );
-          if (this.redisClient && ttlSeconds > 0) {
-            await this.redisClient.set(
-              `prev:${session.refresh_token_hash}`,
-              "1",
-              "EX",
-              ttlSeconds,
+    return this.authQueue.add(async () => {
+      let session: Session | null = null;
+      try {
+        this.logger.debug(`Refreshing token for user ${user.username}`);
+        // Find and update existing session
+        const refreshTokenHash = createHash("sha256")
+          .update(currentRefreshToken)
+          .digest("hex");
+        session = await this.sessionRepository.findOne({
+          where: {
+            user: { id: user.id },
+            refresh_token_hash: refreshTokenHash,
+            revoked: false,
+            expires_at: MoreThan(new Date()),
+          },
+        });
+        if (!session) {
+          throw new UnauthorizedException("Invalid or expired refresh token");
+        }
+        // Generate new tokens
+        const payload: GamevaultJwtPayload = {
+          sub: user.id.toString(),
+          name:
+            [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
+          given_name: user.first_name,
+          family_name: user.last_name,
+          preferred_username: user.username,
+          email: user.email,
+          role: user.role.toString(),
+          birthdate: user.birth_date?.toISOString(),
+        };
+        const newRefreshToken = this.jwtService.sign(
+          { payload },
+          {
+            secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
+            expiresIn: configuration.AUTH.REFRESH_TOKEN
+              .EXPIRES_IN as StringValue,
+          },
+        );
+        // Store old token in Redis (grace period) to avoid schema changes.
+        if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
+          try {
+            const ttlSeconds = Math.ceil(
+              (ms(
+                configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue,
+              ) || 0) / 1000,
             );
-          } else if (ttlSeconds > 0) {
+            if (this.redisClient && ttlSeconds > 0) {
+              await this.redisClient.set(
+                `prev:${session.refresh_token_hash}`,
+                "1",
+                "EX",
+                ttlSeconds,
+              );
+            } else if (ttlSeconds > 0) {
+              this.fallbackCache.set(
+                `prev:${session.refresh_token_hash}`,
+                ttlSeconds,
+              );
+            }
+          } catch (err) {
+            const ttlSeconds = Math.ceil(
+              (ms(
+                configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue,
+              ) || 0) / 1000,
+            );
             this.fallbackCache.set(
               `prev:${session.refresh_token_hash}`,
               ttlSeconds,
             );
+            this.logger.warn({
+              message: "Redis unavailable, using in-memory grace-period store",
+              err,
+            });
           }
-        } catch (err) {
-          const ttlSeconds = Math.ceil(
-            (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
-              0) / 1000,
-          );
-          this.fallbackCache.set(
-            `prev:${session.refresh_token_hash}`,
-            ttlSeconds,
-          );
-          this.logger.warn({
-            message: "Redis unavailable, using in-memory grace-period store",
-            err,
-          });
+        }
+        // Update session with new refresh token
+        session.refresh_token_hash = createHash("sha256")
+          .update(newRefreshToken)
+          .digest("hex");
+        session.expires_at = new Date(
+          Date.now() +
+            ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
+        );
+        await this.sessionRepository.save(session);
+        return {
+          access_token: this.jwtService.sign({ payload }),
+          refresh_token: newRefreshToken,
+        };
+      } catch (error) {
+        throw error;
+      } finally {
+        session = null;
+        if (global.gc) {
+          setImmediate(() => global.gc());
         }
       }
-      // Update session with new refresh token
-      session.refresh_token_hash = createHash("sha256")
-        .update(newRefreshToken)
-        .digest("hex");
-      session.expires_at = new Date(
-        Date.now() +
-          ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
-      );
-      await this.sessionRepository.save(session);
-      return {
-        access_token: this.jwtService.sign({ payload }),
-        refresh_token: newRefreshToken,
-      };
-    } catch (error) {
-      throw error;
-    } finally {
-      // Explicitly null out large objects to help GC
-      session = null;
-    }
+    });
   }
 
   async register(dto: RegisterUserDto): Promise<GamevaultUser> {
