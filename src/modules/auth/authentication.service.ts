@@ -68,6 +68,8 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     }
     // Clean up the cache when service is destroyed
     this.fallbackCache.destroy();
+    this.fallbackCache.clear();
+    this.logger.log("Cleaning up authentication service resources");
   }
 
   private async cleanupOldSessions() {
@@ -211,99 +213,96 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     currentRefreshToken: string,
   ): Promise<TokenPairDto> {
     this.logger.debug(`Refreshing token for user ${user.username}`);
-
-    // Find and update existing session
-    const refreshTokenHash = createHash("sha256")
-      .update(currentRefreshToken)
-      .digest("hex");
-
-    const session = await this.sessionRepository.findOne({
-      where: {
-        user: { id: user.id },
-        refresh_token_hash: refreshTokenHash,
-        revoked: false,
-        expires_at: MoreThan(new Date()),
-      },
-    });
-
-    if (!session) {
-      // Changed from BadRequestException to UnauthorizedException
-      throw new UnauthorizedException("Invalid or expired refresh token");
-    }
-
-    // Generate new tokens
-    const payload: GamevaultJwtPayload = {
-      sub: user.id.toString(),
-      name: [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
-      given_name: user.first_name,
-      family_name: user.last_name,
-      preferred_username: user.username,
-      email: user.email,
-      role: user.role.toString(),
-      birthdate: user.birth_date?.toISOString(),
-    };
-
-    const newRefreshToken = this.jwtService.sign(
-      { payload },
-      {
-        secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
-        expiresIn: configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
-      },
-    );
-
-    // Store old token in Redis (grace period) to avoid schema changes.
-    // Key format: prev:{sha256hex} -> "1"
-    if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
-      try {
-        const ttlSeconds = Math.ceil(
-          (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
-            0) / 1000,
-        );
-        if (this.redisClient && ttlSeconds > 0) {
-          await this.redisClient.set(
-            `prev:${session.refresh_token_hash}`,
-            "1",
-            "EX",
-            ttlSeconds,
+    let session: Session | null = null;
+    try {
+      // Find and update existing session
+      const refreshTokenHash = createHash("sha256")
+        .update(currentRefreshToken)
+        .digest("hex");
+      session = await this.sessionRepository.findOne({
+        where: {
+          user: { id: user.id },
+          refresh_token_hash: refreshTokenHash,
+          revoked: false,
+          expires_at: MoreThan(new Date()),
+        },
+      });
+      if (!session) {
+        throw new UnauthorizedException("Invalid or expired refresh token");
+      }
+      // Generate new tokens
+      const payload: GamevaultJwtPayload = {
+        sub: user.id.toString(),
+        name:
+          [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
+        given_name: user.first_name,
+        family_name: user.last_name,
+        preferred_username: user.username,
+        email: user.email,
+        role: user.role.toString(),
+        birthdate: user.birth_date?.toISOString(),
+      };
+      const newRefreshToken = this.jwtService.sign(
+        { payload },
+        {
+          secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
+          expiresIn: configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
+        },
+      );
+      // Store old token in Redis (grace period) to avoid schema changes.
+      if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
+        try {
+          const ttlSeconds = Math.ceil(
+            (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
+              0) / 1000,
           );
-        } else if (ttlSeconds > 0) {
-          // store in in-memory fallback
+          if (this.redisClient && ttlSeconds > 0) {
+            await this.redisClient.set(
+              `prev:${session.refresh_token_hash}`,
+              "1",
+              "EX",
+              ttlSeconds,
+            );
+          } else if (ttlSeconds > 0) {
+            this.fallbackCache.set(
+              `prev:${session.refresh_token_hash}`,
+              ttlSeconds,
+            );
+          }
+        } catch (err) {
+          const ttlSeconds = Math.ceil(
+            (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
+              0) / 1000,
+          );
           this.fallbackCache.set(
             `prev:${session.refresh_token_hash}`,
             ttlSeconds,
           );
+          this.logger.warn({
+            message: "Redis unavailable, using in-memory grace-period store",
+            err,
+          });
         }
-      } catch (err) {
-        // Fallback: if Redis fails, store in-memory
-        const ttlSeconds = Math.ceil(
-          (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
-            0) / 1000,
-        );
-        this.fallbackCache.set(
-          `prev:${session.refresh_token_hash}`,
-          ttlSeconds,
-        );
-        this.logger.warn({
-          message: "Redis unavailable, using in-memory grace-period store",
-          err,
-        });
       }
+      // Update session with new refresh token
+      session.refresh_token_hash = createHash("sha256")
+        .update(newRefreshToken)
+        .digest("hex");
+      session.expires_at = new Date(
+        Date.now() +
+          ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
+      );
+      await this.sessionRepository.save(session);
+      return {
+        access_token: this.jwtService.sign({ payload }),
+        refresh_token: newRefreshToken,
+      };
+    } catch (error) {
+      throw error;
+    } finally {
+      // Explicitly null out large objects to help GC
+      session = null;
     }
-
-    // Update session with new refresh token
-    session.refresh_token_hash = createHash("sha256")
-      .update(newRefreshToken)
-      .digest("hex");
-    session.expires_at = new Date(
-      Date.now() +
-        ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
-    );
-    await this.sessionRepository.save(session);
-
-    return {
-      access_token: this.jwtService.sign({ payload }),
-      refresh_token: newRefreshToken,
-    };
   }
 
   async register(dto: RegisterUserDto): Promise<GamevaultUser> {
@@ -382,16 +381,16 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getUserSessions(user: GamevaultUser): Promise<Session[]> {
-    return this.sessionRepository.find({
-      where: {
-        user: { id: user.id },
-        revoked: false,
-        expires_at: MoreThan(new Date()),
-      },
-      order: {
-        created_at: "DESC",
-      },
-    });
+    // Use streaming/limit to avoid loading too many sessions
+    const sessions = await this.sessionRepository
+      .createQueryBuilder("session")
+      .where("session.user_id = :userId", { userId: user.id })
+      .andWhere("session.revoked = :revoked", { revoked: false })
+      .andWhere("session.expires_at > :now", { now: new Date() })
+      .orderBy("session.created_at", "DESC")
+      .take(100) // Limit results to prevent massive memory usage
+      .getMany();
+    return sessions;
   }
 
   async revokeAllUserSessions(user: GamevaultUser): Promise<void> {

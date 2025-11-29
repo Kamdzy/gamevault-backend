@@ -14,7 +14,9 @@ const baseConfig: TypeOrmModuleOptions = {
   synchronize: configuration.DB.SYNCHRONIZE,
   namingStrategy: new SnakeNamingStrategy(),
   migrationsRun: !configuration.DB.SYNCHRONIZE,
-  logging: configuration.DB.DEBUG,
+  logging: ["error", "warn"], // Only log errors/warnings
+  maxQueryExecutionTime: 5000, // Log slow queries over 5s
+  dropSchema: false,
 };
 
 const postgresConfig: PostgresConnectionOptions = {
@@ -26,6 +28,16 @@ const postgresConfig: PostgresConnectionOptions = {
   database: configuration.DB.DATABASE,
   migrations: ["dist/src/modules/database/migrations/postgres/*.js"],
   ssl: getPostgresTlsOptions(),
+  extra: {
+    max: 10, // Maximum pool size
+    min: 2, // Minimum pool connections
+    idleTimeoutMillis: 30000, // 30s idle
+    connectionTimeoutMillis: 10000, // 10s connect timeout
+    statement_timeout: 30000, // 30s query timeout
+    query_timeout: 30000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+  },
 };
 
 const sqliteConfig: BetterSqlite3ConnectionOptions = {
@@ -34,6 +46,8 @@ const sqliteConfig: BetterSqlite3ConnectionOptions = {
   database: configuration.TESTING.IN_MEMORY_DB
     ? ":memory:"
     : `${configuration.VOLUMES.SQLITEDB}/database.sqlite`,
+  // SQLite pool options (if supported)
+  // extra: { max: 5, min: 1 },
 };
 
 export function getDatabaseConfiguration(
