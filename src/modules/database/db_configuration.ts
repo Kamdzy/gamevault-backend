@@ -28,16 +28,16 @@ const postgresConfig: PostgresConnectionOptions = {
   database: configuration.DB.DATABASE,
   migrations: ["dist/src/modules/database/migrations/postgres/*.js"],
   ssl: getPostgresTlsOptions(),
-  extra: {
-    max: 10, // Maximum pool size
-    min: 2, // Minimum pool connections
-    idleTimeoutMillis: 30000, // 30s idle
-    connectionTimeoutMillis: 10000, // 10s connect timeout
-    statement_timeout: 30000, // 30s query timeout
-    query_timeout: 30000,
-    keepAlive: true,
-    keepAliveInitialDelayMillis: 10000,
-  },
+  // extra: {
+  //   max: 10, // Maximum pool size
+  //   min: 2, // Minimum pool connections
+  //   idleTimeoutMillis: 30000, // 30s idle
+  //   connectionTimeoutMillis: 10000, // 10s connect timeout
+  //   statement_timeout: 30000, // 30s query timeout
+  //   query_timeout: 30000,
+  //   keepAlive: true,
+  //   keepAliveInitialDelayMillis: 10000,
+  // },
 };
 
 const sqliteConfig: BetterSqlite3ConnectionOptions = {
