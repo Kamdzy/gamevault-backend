@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  OnModuleDestroy,
   OnModuleInit,
   UnauthorizedException, // ADD THIS
 } from "@nestjs/common";
@@ -24,7 +25,7 @@ import { TokenPairDto } from "./models/token-pair.dto";
 import { Session } from "./session.entity";
 
 @Injectable()
-export class AuthenticationService implements OnModuleInit {
+export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(this.constructor.name);
   private readonly fallbackCache = new InMemoryTtlCache();
   private cleanupInterval: NodeJS.Timeout | null = null;
@@ -48,12 +49,25 @@ export class AuthenticationService implements OnModuleInit {
       },
       5 * 60 * 1000,
     ); // 5 minutes
+    // Log cache stats every 5 minutes
+    setInterval(
+      () => {
+        const stats = this.fallbackCache.getStats();
+        this.logger.warn({
+          message: "Cache statistics",
+          ...stats,
+        });
+      },
+      5 * 60 * 1000,
+    );
   }
 
   async onModuleDestroy() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
     }
+    // Clean up the cache when service is destroyed
+    this.fallbackCache.destroy();
   }
 
   private async cleanupOldSessions() {
