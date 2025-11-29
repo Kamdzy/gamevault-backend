@@ -63,7 +63,8 @@ export class BasicAuthController {
       user: request.user,
     });
     return this.authenticationService.login(
-      request.user,
+      request.user.username,
+      request.user.password,
       request.ip,
       request.headers["user-agent"] || "unknown",
     );

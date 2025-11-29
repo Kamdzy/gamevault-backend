@@ -60,7 +60,8 @@ export class OAuth2Controller {
 
     // Get token data
     const tokenData = await this.authenticationService.login(
-      request.user,
+      request.user.username,
+      request.user.password,
       request.ip,
       request.headers["user-agent"] || "unknown",
     );
