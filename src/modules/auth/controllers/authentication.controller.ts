@@ -6,6 +6,8 @@ import {
   Logger,
   Post,
   Request,
+  Res,
+  UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
 import {
@@ -17,6 +19,7 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
+import { Response } from "express";
 import { SkipGuards } from "../../../decorators/skip-guards.decorator";
 import { GamevaultUser } from "../../users/gamevault-user.entity";
 import { AuthenticationService } from "../authentication.service";
@@ -35,7 +38,7 @@ export class GamevaultJwtController {
   constructor(private readonly authService: AuthenticationService) {}
 
   @Post("refresh")
-  @Throttle(5, 60)
+  @Throttle(3, 60) // Reduced from 5 to 3
   @UseGuards(CustomThrottlerGuard, RefreshTokenGuard)
   @SkipGuards()
   @ApiOperation({
@@ -52,17 +55,32 @@ export class GamevaultJwtController {
       ip: string;
       headers: { [key: string]: string };
     },
+    @Res({ passthrough: true }) res: Response,
   ): Promise<TokenPairDto> {
     const refreshToken = req.headers.authorization?.replace("Bearer ", "");
+    
     if (!refreshToken) {
-      throw new BadRequestException("No refresh token provided");
+      res.setHeader('X-Auth-Action', 'relogin');
+      throw new UnauthorizedException("No refresh token provided");
     }
-    return this.authService.refresh(
-      req.user,
-      req.ip,
-      req.headers["user-agent"] || "Unknown User Agent",
-      refreshToken,
-    );
+
+    try {
+      return await this.authService.refresh(
+        req.user,
+        req.ip,
+        req.headers["user-agent"] || "Unknown User Agent",
+        refreshToken,
+      );
+    } catch (error) {
+      // Signal to client that they should stop retrying and re-login
+      res.setHeader('X-Auth-Action', 'relogin');
+      
+      // Convert BadRequest to Unauthorized for auth errors
+      if (error instanceof BadRequestException) {
+        throw new UnauthorizedException(error.message);
+      }
+      throw error;
+    }
   }
 
   @Post("revoke")

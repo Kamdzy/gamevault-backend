@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   OnModuleInit,
+  UnauthorizedException, // ADD THIS
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -138,7 +139,8 @@ export class AuthenticationService implements OnModuleInit {
     });
 
     if (!session) {
-      throw new BadRequestException("Invalid or expired refresh token");
+      // Changed from BadRequestException to UnauthorizedException
+      throw new UnauthorizedException("Invalid or expired refresh token");
     }
 
     // Generate new tokens
@@ -166,7 +168,8 @@ export class AuthenticationService implements OnModuleInit {
     if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
       try {
         const ttlSeconds = Math.ceil(
-          (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000,
+          (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
+            0) / 1000,
         );
         if (this.redisClient && ttlSeconds > 0) {
           await this.redisClient.set(
@@ -177,13 +180,25 @@ export class AuthenticationService implements OnModuleInit {
           );
         } else if (ttlSeconds > 0) {
           // store in in-memory fallback
-          this.fallbackCache.set(`prev:${session.refresh_token_hash}`, ttlSeconds);
+          this.fallbackCache.set(
+            `prev:${session.refresh_token_hash}`,
+            ttlSeconds,
+          );
         }
       } catch (err) {
         // Fallback: if Redis fails, store in-memory
-        const ttlSeconds = Math.ceil((ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) || 0) / 1000);
-        this.fallbackCache.set(`prev:${session.refresh_token_hash}`, ttlSeconds);
-        this.logger.warn({ message: "Redis unavailable, using in-memory grace-period store", err });
+        const ttlSeconds = Math.ceil(
+          (ms(configuration.AUTH.REFRESH_TOKEN.GRACE_PERIOD as StringValue) ||
+            0) / 1000,
+        );
+        this.fallbackCache.set(
+          `prev:${session.refresh_token_hash}`,
+          ttlSeconds,
+        );
+        this.logger.warn({
+          message: "Redis unavailable, using in-memory grace-period store",
+          err,
+        });
       }
     }
 
@@ -259,14 +274,19 @@ export class AuthenticationService implements OnModuleInit {
     try {
       if (configuration.AUTH.USE_REDIS_GRACE_PERIOD) {
         if (this.redisClient) {
-          const exists = await this.redisClient.exists(`prev:${refreshTokenHash}`);
+          const exists = await this.redisClient.exists(
+            `prev:${refreshTokenHash}`,
+          );
           if (exists) return false;
         }
         // Check in-memory fallback
         if (this.fallbackCache.has(`prev:${refreshTokenHash}`)) return false;
       }
     } catch (err) {
-      this.logger.warn({ message: "Redis check failed in isTokenRevoked", err });
+      this.logger.warn({
+        message: "Redis check failed in isTokenRevoked",
+        err,
+      });
     }
 
     // No matching current or previous token found
