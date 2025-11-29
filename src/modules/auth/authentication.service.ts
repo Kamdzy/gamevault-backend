@@ -24,7 +24,7 @@ import { RefreshTokenDto } from "./models/refresh-token.dto";
 import { TokenPairDto } from "./models/token-pair.dto";
 import { Session } from "./session.entity";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const PQueue = require("p-queue");
+const PQueue = require("p-queue").default;
 
 @Injectable()
 export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
