@@ -89,19 +89,35 @@ export class UsersService implements OnApplicationBootstrap {
     id: number,
     options: FindOptions = { loadRelations: true, loadDeletedEntities: true },
   ): Promise<GamevaultUser> {
+    // Optimize: Only load shallow relations and selected fields to reduce memory usage
     let relations = [];
+    let select: (keyof GamevaultUser)[] | undefined = undefined;
 
     if (options.loadRelations) {
       if (options.loadRelations === true) {
+        // Only load direct relations needed for the API response
         relations = [
-          "progresses",
-          "progresses.game",
-          "progresses.game.metadata",
-          "progresses.game.metadata.cover",
+          "progresses", // Only direct progresses, not deep game/metadata
           "bookmarked_games",
         ];
-      } else if (Array.isArray(options.loadRelations))
+        // Select only necessary user fields
+        select = [
+          "id",
+          "username",
+          "email",
+          "first_name",
+          "last_name",
+          "birth_date",
+          "activated",
+          "role",
+          "avatar",
+          "background",
+          "progresses",
+          "bookmarked_games",
+        ];
+      } else if (Array.isArray(options.loadRelations)) {
         relations = options.loadRelations;
+      }
     }
 
     const user = await this.userRepository
@@ -111,6 +127,7 @@ export class UsersService implements OnApplicationBootstrap {
           deleted_at: options.loadDeletedEntities ? undefined : IsNull(),
         },
         relations,
+        ...(select ? { select } : {}),
         withDeleted: true,
         relationLoadStrategy: "query",
       })
@@ -119,6 +136,11 @@ export class UsersService implements OnApplicationBootstrap {
           cause: error,
         });
       });
+
+    // Optionally, batch-load progresses' games/metadata if needed, but avoid deep eager loading
+    // If the API response requires progresses.game, load them in a separate query and attach
+    // (This can be further optimized with DataLoader or batching if needed)
+
     return this.filterDeletedProgresses(user);
   }
 
