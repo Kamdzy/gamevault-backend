@@ -66,9 +66,6 @@ export class GamevaultJwtController {
 
     try {
       return await this.authService.refresh(
-        req.user,
-        req.ip,
-        req.headers["user-agent"] || "Unknown User Agent",
         refreshToken,
       );
     } catch (error) {
