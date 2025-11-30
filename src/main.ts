@@ -12,6 +12,9 @@ import morgan from "morgan";
 //import { AsyncApiDocumentBuilder, AsyncApiModule } from "nestjs-asyncapi";
 
 import { Response } from "express";
+import fs from "fs";
+import path from "path";
+import { Worker } from "worker_threads";
 import { AppModule } from "./app.module";
 import configuration, {
   getCensoredConfiguration,
@@ -194,6 +197,63 @@ async function bootstrap(): Promise<void> {
     port: configuration.SERVER.PORT,
     config: getCensoredConfiguration(),
   });
+
+  // Fire-and-forget: start initial file indexing in a worker thread so it
+  // cannot block the main event loop. Prefer compiled JS in dist, fallback
+  // to loading ts via ts-node in dev using an eval worker.
+  if (!configuration.TESTING.MOCK_FILES) {
+    try {
+      const compiledWorker = path.join(
+        process.cwd(),
+        "dist",
+        "src",
+        "scripts",
+        "indexer-worker.js",
+      );
+      let worker: Worker | undefined;
+
+      if (fs.existsSync(compiledWorker)) {
+        worker = new Worker(compiledWorker);
+      } else {
+        // Dev fallback: require ts-node/register then run the TS worker file
+        const tsWorkerFile = path.join(
+          process.cwd(),
+          "src",
+          "scripts",
+          "indexer-worker.ts",
+        );
+        const code = `require('ts-node/register'); require(${JSON.stringify(tsWorkerFile)});`;
+        worker = new Worker(code, { eval: true });
+      }
+
+      if (worker) {
+        worker.unref();
+        worker.on("error", (err) => {
+          logger.error({
+            context: "Initialization",
+            message: "Indexer worker error.",
+            error: err,
+          });
+        });
+        worker.on("exit", (code) => {
+          logger.log({
+            context: "Initialization",
+            message: `Indexer worker exited with code ${code}`,
+          });
+        });
+        logger.log({
+          context: "Initialization",
+          message: "Triggered indexer worker thread.",
+        });
+      }
+    } catch (error) {
+      logger.error({
+        context: "Initialization",
+        message: "Failed to spawn indexer worker.",
+        error,
+      });
+    }
+  }
 }
 
 Error.stackTraceLimit = configuration.SERVER.STACK_TRACE_LIMIT;

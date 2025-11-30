@@ -75,7 +75,17 @@ export class FilesService implements OnApplicationBootstrap {
       .on("error", (error) =>
         this.logger.error({ message: "Error in Filewatcher.", error }),
       );
-    this.indexAllFiles();
+  }
+
+  // Start initial full index on demand (moved to be invoked after server listen)
+  public async startIndexing(): Promise<void> {
+    try {
+      this.logger.log({ message: "Starting initial file index (background)." });
+      await this.indexAllFiles();
+      this.logger.log({ message: "Initial file index finished." });
+    } catch (error) {
+      this.logger.error({ message: "Initial file index failed.", error });
+    }
   }
 
   @Cron(
@@ -88,7 +98,7 @@ export class FilesService implements OnApplicationBootstrap {
   )
   public async indexAllFiles() {
     for (const file of await this.readAllFiles())
-      this.index(file.path, { size: Number(file.size) } as Stats);
+      await this.index(file.path, { size: Number(file.size) } as Stats);
   }
 
   private async index(path: string, stats?: Stats) {
