@@ -21,6 +21,7 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
     && apt install -y --no-install-recommends \
     build-essential \
     curl \
+    ca-certificates \
     g++ \
     make \
     p7zip-full \
@@ -29,6 +30,8 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
     python-is-python3 \
     python3 \
     sudo \
+    # Update CA certificates
+    && update-ca-certificates \
     # Install PostgreSQL client from the PostgreSQL Global Development Group (PGDG)
     && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh \
     && apt install -y --no-install-recommends postgresql-client \
@@ -40,7 +43,6 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
 # Set working directory for the application
 WORKDIR /app
 
-# Set NODE_PATH for module resolution in plugins
 ENV NODE_PATH=/app/node_modules
 
 # ---- Build Stage ----
