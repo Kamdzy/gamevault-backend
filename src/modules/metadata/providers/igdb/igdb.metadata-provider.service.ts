@@ -281,12 +281,14 @@ export class IgdbMetadataProviderService extends MetadataProvider {
     ageRatings: igdbModels.IAgeRating[],
     gameTitle: string = "Unknown Game",
   ): number {
+    const DEFAULT_AGE = 7;
+
     if (isEmpty(ageRatings)) {
       this.logger.debug({
-        message: `No age ratings found.`,
+        message: `No age ratings found. Using default age: ${DEFAULT_AGE}`,
         gameTitle,
       });
-      return undefined;
+      return DEFAULT_AGE;
     }
 
     const ages = ageRatings
@@ -307,10 +309,10 @@ export class IgdbMetadataProviderService extends MetadataProvider {
 
     if (ages?.length === 0) {
       this.logger.debug({
-        message: `No age ratings found.`,
+        message: `No mapped age ratings found. Using default age: ${DEFAULT_AGE}`,
         gameTitle,
       });
-      return undefined;
+      return DEFAULT_AGE;
     }
 
     const averageAge = Math.round(
