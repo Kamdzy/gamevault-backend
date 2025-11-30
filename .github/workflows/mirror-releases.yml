@@ -1,0 +1,185 @@
+name: Mirror Upstream Releases
+
+on:
+  schedule:
+    # Check for new releases every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  check-upstream-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.3.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Get latest upstream release
+        id: upstream
+        run: |
+          UPSTREAM_API="https://api.github.com/repos/Phalcode/gamevault-backend/releases/latest"
+          UPSTREAM_RELEASE=$(curl -s "$UPSTREAM_API" | jq -r '.tag_name')
+          echo "Latest upstream release: $UPSTREAM_RELEASE"
+          echo "tag=$UPSTREAM_RELEASE" >> $GITHUB_OUTPUT
+          RELEASE_NAME=$(curl -s "$UPSTREAM_API" | jq -r '.name')
+          echo "name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          RELEASE_BODY=$(curl -s "$UPSTREAM_API" | jq -r '.body')
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELEASE_BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          IS_PRERELEASE=$(curl -s "$UPSTREAM_API" | jq -r '.prerelease')
+          echo "prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists in our repo (including 4-part variants)
+        id: check
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          OUR_TAG="${UPSTREAM_TAG}-kam"
+          echo "our_tag=$OUR_TAG" >> $GITHUB_OUTPUT
+          # Query repository releases and look for any tag that starts with the upstream tag and contains -kam
+          EXISTING=$(curl -s -H "Authorization: token ${{ secrets.REGISTRY_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases?per_page=200" | jq -r --arg t "$UPSTREAM_TAG" '.[] | select((.tag_name|startswith($t)) and (.tag_name|contains("-kam"))) | .tag_name' | head -n1)
+          if [ -n "$EXISTING" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "found_tag=$EXISTING" >> $GITHUB_OUTPUT
+            echo "Release $EXISTING already exists in our repository"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release $OUR_TAG does not exist in our repository"
+          fi
+
+      - name: Merge upstream changes
+        id: merge
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Add upstream remote if not already added
+          git remote add upstream https://github.com/Phalcode/gamevault-backend.git 2>/dev/null || true
+          git fetch upstream --tags
+          # Get the upstream tag
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          # Merge upstream master into our master
+          git checkout master
+          git merge upstream/master --no-edit || {
+            echo "Merge conflict detected."
+            git merge --abort
+            echo "conflict=true" >> $GITHUB_OUTPUT
+            exit 1
+          }
+          echo "conflict=false" >> $GITHUB_OUTPUT
+
+      - name: Send Discord notification on merge conflict
+        if: failure() && steps.merge.outputs.conflict == 'true'
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          UPSTREAM_NAME="${{ steps.upstream.outputs.name }}"
+          OUR_TAG="${{ steps.check.outputs.our_tag }}"
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"⚠️ Release Creation Failed - Merge Conflict\",
+                \"description\": \"Failed to create release **${UPSTREAM_NAME}** (${OUR_TAG}) due to merge conflicts with upstream.\",
+                \"color\": 15158332,
+                \"fields\": [
+                  {
+                    \"name\": \"Repository\",
+                    \"value\": \"[${{ github.repository }}](https://github.com/${{ github.repository }})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Upstream Release\",
+                    \"value\": \"[${UPSTREAM_TAG}](https://github.com/Phalcode/gamevault-backend/releases/tag/${UPSTREAM_TAG})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Workflow Run\",
+                    \"value\": \"[View Details](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+                    \"inline\": false
+                  },
+                  {
+                    \"name\": \"Action Required\",
+                    \"value\": \"Manual merge required. Resolve conflicts locally, push changes, then manually create release ${OUR_TAG}.\",
+                    \"inline\": false
+                  }
+                ],
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Push merged changes
+        if: steps.check.outputs.exists == 'false' && steps.merge.outputs.conflict == 'false'
+        run: |
+          git push origin master
+
+      - name: Create release with our code
+        id: create_release
+        if: steps.check.outputs.exists == 'false' && steps.merge.outputs.conflict == 'false'
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          UPSTREAM_NAME="${{ steps.upstream.outputs.name }}"
+          OUR_TAG="${{ steps.check.outputs.our_tag }}"
+          IS_PRERELEASE="${{ steps.upstream.outputs.prerelease }}"
+          # Create the tag pointing to our current HEAD (which has our custom code merged with upstream)
+          git tag -a "$OUR_TAG" -m "Release $OUR_TAG - Based on upstream Phalcode/gamevault-backend $UPSTREAM_TAG"
+          git push origin "$OUR_TAG"
+          # Prepare release body with custom header (single-quoted multilined string)
+          RELEASE_BODY="## 🔀 Forked Release from Phalcode/gamevault-backend\nThis release is based on [upstream version ${{ steps.upstream.outputs.tag }}](https://github.com/Phalcode/gamevault-backend/releases/tag/${{ steps.upstream.outputs.tag }}) with custom modifications.\n\n### Custom Changes in this Fork:\n- Implemented grace period handling for expired refresh tokens and scheduled cleanup of expired refresh tokens\n- Custom GHCR image configuration for \`ghcr.io/kamdzy/gamevault-backend\`\n\n### Upstream Release Notes:\n---\n${{ steps.upstream.outputs.body }}"
+          # Create the release using GitHub CLI with explicit target
+          PRERELEASE_FLAG=""
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "$OUR_TAG" \
+            --repo "${{ github.repository }}" \
+            --target master \
+            --title "$UPSTREAM_NAME (Kamdzy Fork)" \
+            --notes "$RELEASE_BODY" \
+            $PRERELEASE_FLAG
+          echo "created=true" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Send Discord notification on successful release
+        if: success() && steps.create_release.outputs.created == 'true'
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          UPSTREAM_NAME="${{ steps.upstream.outputs.name }}"
+          OUR_TAG="${{ steps.check.outputs.our_tag }}"
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"🚀 New Release Created Successfully\",
+                \"description\": \"Successfully created release **${UPSTREAM_NAME} (Kamdzy Fork)** based on upstream Phalcode/gamevault-backend with custom modifications.\",
+                \"color\": 3066993,
+                \"fields\": [
+                  {
+                    \"name\": \"Release Tag\",
+                    \"value\": \"[${OUR_TAG}](https://github.com/${{ github.repository }}/releases/tag/${OUR_TAG})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Upstream Release\",
+                    \"value\": \"[${UPSTREAM_TAG}](https://github.com/Phalcode/gamevault-backend/releases/tag/${UPSTREAM_TAG})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Docker Images\",
+                    \"value\": \"Building now... Will be available at:\n`ghcr.io/kamdzy/gamevault-backend:${OUR_TAG}`\n`ghcr.io/kamdzy/gamevault-backend:latest`\",
+                    \"inline\": false
+                  },
+                  {
+                    \"name\": \"Workflow Run\",
+                    \"value\": \"[View Build Progress](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+                    \"inline\": false
+                  }
+                ],
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}

@@ -1,0 +1,42 @@
+name: Delete All Workflow Runs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Delete all workflow runs in the repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let page = 1;
+            while (true) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                page: page
+              });
+
+              if (data.workflow_runs.length === 0) {
+                console.log("No more runs found.");
+                break;
+              }
+
+              for (const run of data.workflow_runs) {
+                await github.rest.actions.deleteWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id
+                });
+                console.log(`Deleted run ${run.id}`);
+              }
+
+              page++;
+            }
