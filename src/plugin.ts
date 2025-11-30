@@ -30,21 +30,24 @@ export default async function loadPlugins() {
       await copy(pluginDir, injectDir);
     }
 
-    const pluginModuleFiles = (
-      await readdir(injectDir, {
-        encoding: "utf8",
-        recursive: true,
-        withFileTypes: true,
-      })
-    ).filter(
-      (file) => file.isFile() && file.name.endsWith(".plugin.module.js"),
-    );
+    // Recursively gather all plugin files with full paths
+    async function getAllPluginFiles(dir: string): Promise<string[]> {
+      const entries = await readdir(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...(await getAllPluginFiles(fullPath)));
+        } else if (entry.isFile() && entry.name.endsWith(".plugin.module.js")) {
+          files.push(fullPath);
+        }
+      }
+      return files;
+    }
 
-    const plugins = await Promise.all(
-      pluginModuleFiles.map(
-        (file) => import(resolve(join(file.path, file.name))),
-      ),
-    );
+    const pluginModuleFiles = await getAllPluginFiles(injectDir);
+
+    const plugins = await Promise.all(pluginModuleFiles.map(file => import(file)));
 
     logger.log({
       context: "PluginLoader",

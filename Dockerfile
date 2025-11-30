@@ -40,6 +40,9 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
 # Set working directory for the application
 WORKDIR /app
 
+# Set NODE_PATH for module resolution in plugins
+ENV NODE_PATH=/app/node_modules
+
 # ---- Build Stage ----
 FROM base AS build
 
