@@ -326,7 +326,7 @@ export class MetadataService {
     });
 
     if (!game.provider_metadata.length && !game.user_metadata) {
-      this.logger.warn({
+      this.logger.debug({
         message: "No metadata found to merge.",
         game: gameId,
         provider_metadata: game.provider_metadata,
