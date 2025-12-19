@@ -4,6 +4,14 @@
       "versions": ">3",
       "reason": "ESM"
     },
+    "readdirp": {
+      "versions": ">4",
+      "reason": "ESM"
+    },
+    "chokidar": {
+      "versions": ">4",
+      "reason": "ESM"
+    },
     "better-sqlite3": {
       "versions": ">9",
       "reason": "TypeORM compatibility"
@@ -17,8 +25,8 @@
       "reason": "Remove when https://github.com/winstonjs/logform/issues/336 is fixed"
     },
     "@types/node": {
-      "versions": ">22.0.0",
-      "reason": "LTS is 22"
+      "versions": ">24.0.0",
+      "reason": "LTS is 24"
     }
   }
 }
