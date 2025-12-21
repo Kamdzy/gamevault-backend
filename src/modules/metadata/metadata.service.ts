@@ -104,6 +104,19 @@ export class MetadataService {
   }
 
   /**
+   * Checks if a provider has negative priority for a game.
+   * Considers both the global provider priority and per-game provider_priority override.
+   */
+  private hasNegativePriority(
+    providerSlug: string,
+    providerPriorityOverride?: number | null,
+  ): boolean {
+    const globalPriority = this.getProviderBySlugOrFail(providerSlug).priority;
+    const effectivePriority = providerPriorityOverride ?? globalPriority;
+    return effectivePriority < 0;
+  }
+
+  /**
    * Checks the metadata of games and updates them if necessary.
    */
   async addUpdateMetadataJob(game: GamevaultGame): Promise<void> {
@@ -185,6 +198,16 @@ export class MetadataService {
         const existingProviderMetadata = game.provider_metadata?.find(
           (metadata) => metadata.provider_slug === provider.slug,
         );
+
+        // Skip providers with negative priority
+        if (
+          this.hasNegativePriority(
+            provider.slug,
+            existingProviderMetadata?.provider_priority,
+          )
+        ) {
+          continue;
+        }
 
         // If the existing provider metadata is already up to date, skip the update.
         if (
@@ -391,15 +414,23 @@ export class MetadataService {
     base: GameMetadata,
     game: GamevaultGame,
   ): GameMetadata {
-    const sortedProviders = game.provider_metadata.toSorted((a, b) => {
-      const priorityA =
-        a.provider_priority ??
-        this.getProviderBySlugOrFail(a.provider_slug).priority;
-      const priorityB =
-        b.provider_priority ??
-        this.getProviderBySlugOrFail(b.provider_slug).priority;
-      return priorityA - priorityB;
-    });
+    const sortedProviders = game.provider_metadata
+      .filter(
+        (metadata) =>
+          !this.hasNegativePriority(
+            metadata.provider_slug,
+            metadata.provider_priority,
+          ),
+      )
+      .toSorted((a, b) => {
+        const priorityA =
+          a.provider_priority ??
+          this.getProviderBySlugOrFail(a.provider_slug).priority;
+        const priorityB =
+          b.provider_priority ??
+          this.getProviderBySlugOrFail(b.provider_slug).priority;
+        return priorityA - priorityB;
+      });
 
     let result = base;
     for (const provider of sortedProviders) {
