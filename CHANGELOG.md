@@ -6,6 +6,7 @@
 
 - Various File Indexing Optimizations
 - [#393](https://github.com/Phalcode/gamevault-backend/issues/393) Added .AppImage as supported Linux Portable File. 
+- [#368](https://github.com/Phalcode/gamevault-backend/issues/368) Added an admin API to update news contents.
 
 ## 16.2.0
 
