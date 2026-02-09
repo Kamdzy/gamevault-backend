@@ -76,8 +76,9 @@ RUN chown -R node:node /app/dist /config /files /media /logs /db /plugins /savef
     && chmod -R 777 /app/dist /config /files /media /logs /db /plugins /savefiles \
     && chmod +x /usr/local/bin/entrypoint.sh
 
-# Expose the server port
+# Expose the server ports (HTTP and HTTPS)
 EXPOSE ${SERVER_PORT}/tcp
+EXPOSE ${SERVER_HTTPS_PORT}/tcp
 
 # Add a health check for the service
 HEALTHCHECK --start-period=300s CMD curl -f http://localhost:${SERVER_PORT}/api/status || exit 1
