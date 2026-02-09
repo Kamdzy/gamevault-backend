@@ -111,6 +111,13 @@ const configuration = {
       process.env.SERVER_ONLINE_ACTIVITIES_DISABLED,
     ),
     STACK_TRACE_LIMIT: parseNumber(process.env.SERVER_STACK_TRACE_LIMIT, 10),
+    HTTPS: {
+      ENABLED: parseBooleanEnvVariable(process.env.SERVER_HTTPS_ENABLED),
+      PORT: parseNumber(process.env.SERVER_HTTPS_PORT, 8443),
+      KEY_PATH: process.env.SERVER_HTTPS_KEY_PATH || undefined,
+      CERT_PATH: process.env.SERVER_HTTPS_CERT_PATH || undefined,
+      CA_CERT_PATH: process.env.SERVER_HTTPS_CA_CERT_PATH || undefined,
+    } as const,
   } as const,
   WEB_UI: {
     ENABLED: parseBooleanEnvVariable(
