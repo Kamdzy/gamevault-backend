@@ -1,9 +1,5 @@
 {
   "ignore": {
-    "better-sqlite3": {
-      "versions": ">9",
-      "reason": "TypeORM compatibility"
-    },
     "fastify": {
       "versions": ">4",
       "reason": "NestJS Paginate Compatibility"
