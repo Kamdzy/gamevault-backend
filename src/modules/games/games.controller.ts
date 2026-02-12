@@ -30,7 +30,7 @@ import {
   PaginationType,
   paginate,
 } from "nestjs-paginate";
-import { Repository } from "typeorm";
+import { In, Not, Repository } from "typeorm";
 
 import { isArray } from "lodash";
 import { FilterSuffix } from "nestjs-paginate/lib/filter";
@@ -39,6 +39,8 @@ import { MinimumRole } from "../../decorators/minimum-role.decorator";
 import { PaginateQueryOptions } from "../../decorators/pagination.decorator";
 import { ApiOkResponsePaginated } from "../../globals";
 import { OtpService } from "../otp/otp.service";
+import { State } from "../progresses/models/state.enum";
+import { Progress } from "../progresses/progress.entity";
 import { GamevaultUser } from "../users/gamevault-user.entity";
 import { Role } from "../users/models/role.enum";
 import { UsersService } from "../users/users.service";
@@ -60,6 +62,8 @@ export class GamesController {
     private readonly filesService: FilesService,
     @InjectRepository(GamevaultGame)
     private readonly gamesRepository: Repository<GamevaultGame>,
+    @InjectRepository(Progress)
+    private readonly progressRepository: Repository<Progress>,
     private readonly usersService: UsersService,
     private readonly otpService: OtpService,
   ) {}
@@ -115,27 +119,50 @@ export class GamesController {
 
     const progressStateFilter = query.filter?.["progresses.state"];
     const progressUserFilter = query.filter?.["progresses.user.id"];
+
+    // "UNPLAYED" means either:
+    //   a) The user has no progress record for this game at all, OR
+    //   b) The user has a progress record with state explicitly set to UNPLAYED.
+    //
+    // We can't use nestjs-paginate's column-level filters for this because:
+    //   1. A LEFT JOIN on progresses returns rows for ALL users' progress,
+    //      so a $null check only matches when NO user has a progress record
+    //      — not just the requesting user.
+    //   2. nestjs-paginate forces INNER JOIN on filtered relations, which
+    //      drops games with no progress rows before IS NULL can match.
+    //
+    // Instead, we pre-query the game IDs where this user has a non-UNPLAYED
+    // progress and exclude them via PaginateConfig.where.
+    let unplayedWhereCondition = undefined;
+
     if (progressStateFilter || progressUserFilter) {
-      // Support for virtual UNPLAYED state.
       if (progressStateFilter?.includes("UNPLAYED")) {
-        if (progressStateFilter && !isArray(progressStateFilter)) {
-          const rawFilterValue = progressStateFilter.split(":").pop();
-          query.filter["progresses.state"] = [
-            "$null",
-            `$or:$eq:${rawFilterValue}`,
-          ];
-        }
-
+        let userId = request.user.id;
         if (progressUserFilter && !isArray(progressUserFilter)) {
-          const rawFilterValue = progressUserFilter.split(":").pop();
-          query.filter["progresses.user.id"] = [
-            "$null",
-            `$or:$not:${rawFilterValue}`,
-          ];
+          userId = Number(progressUserFilter.split(":").pop());
         }
-      }
 
-      relations.push("progresses", "progresses.user");
+        const playedProgresses = await this.progressRepository.find({
+          where: {
+            user: { id: userId },
+            state: Not(State.UNPLAYED),
+          },
+          relations: ["game"],
+          select: { game: { id: true } },
+        });
+
+        const excludedGameIds = playedProgresses.map((p) => p.game.id);
+
+        if (excludedGameIds.length > 0) {
+          unplayedWhereCondition = { id: Not(In(excludedGameIds)) };
+        }
+
+        // Remove progress filters — handled by the pre-query above
+        delete query.filter["progresses.state"];
+        delete query.filter["progresses.user.id"];
+      } else {
+        relations.push("progresses", "progresses.user");
+      }
     }
 
     if (
@@ -149,32 +176,14 @@ export class GamesController {
       ];
     }
 
-    // BUG FIX for #357: Filtering by UNPLAYED state returned no results.
-    //
-    // nestjs-paginate's addFilter() automatically converts any filtered
-    // relation from LEFT JOIN to INNER JOIN (see filter.js addFilter return).
-    // This is normally correct — but for UNPLAYED we need games that have NO
-    // progress record at all, which means their progress columns are NULL.
-    // An INNER JOIN on "progresses" drops those rows before the WHERE
-    // "progresses.state IS NULL" clause can ever match, so zero results.
-    //
-    // config.joinMethods overrides the filter-forced join method
-    // ({ ...filterJoinMethods, ...config.joinMethods }), so we explicitly
-    // set LEFT JOIN here to keep games without progress records in the result.
-    const joinMethods: Record<string, "leftJoinAndSelect"> = {};
-    if (progressStateFilter?.includes("UNPLAYED")) {
-      joinMethods["progresses"] = "leftJoinAndSelect";
-      joinMethods["progresses.user"] = "leftJoinAndSelect";
-    }
-
     return paginate(query, this.gamesRepository, {
       paginationType: PaginationType.TAKE_AND_SKIP,
+      where: unplayedWhereCondition,
       defaultLimit: 100,
       defaultSortBy: [["sort_title", "ASC"]],
       maxLimit: -1,
       nullSort: "last",
       relations,
-      joinMethods,
       sortableColumns: [
         "id",
         "title",
