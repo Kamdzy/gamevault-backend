@@ -21,6 +21,7 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
     && apt update \
     && apt install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
     curl \
     g++ \
     make \
