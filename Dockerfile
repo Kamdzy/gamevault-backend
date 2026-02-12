@@ -30,9 +30,10 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
     python-is-python3 \
     python3 \
     sudo \
-    # Install PostgreSQL client from the PostgreSQL Global Development Group (PGDG)
+    # Install the latest PostgreSQL client from the PostgreSQL Global Development Group (PGDG)
+    # pg_dump is backward-compatible, so the latest version works with all prior server versions
     && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh \
-    && apt install -y --no-install-recommends postgresql-client \
+    && apt install -y --no-install-recommends postgresql-client-$(apt-cache search --names-only '^postgresql-client-[0-9]+$' | sort -t'-' -k3 -n | tail -1 | grep -oP '\d+$') \
     # Clean up to reduce image size
     && apt clean && rm -rf /var/lib/apt/lists/* \
     # Install PNPM package manager globally
