@@ -149,9 +149,18 @@ export class GamesController {
       ];
     }
 
-    // Force LEFT JOIN for progress relations when filtering for UNPLAYED state.
-    // nestjs-paginate normally forces INNER JOIN on filtered relations, which
-    // would exclude games with no progress records — exactly the ones we need.
+    // BUG FIX for #357: Filtering by UNPLAYED state returned no results.
+    //
+    // nestjs-paginate's addFilter() automatically converts any filtered
+    // relation from LEFT JOIN to INNER JOIN (see filter.js addFilter return).
+    // This is normally correct — but for UNPLAYED we need games that have NO
+    // progress record at all, which means their progress columns are NULL.
+    // An INNER JOIN on "progresses" drops those rows before the WHERE
+    // "progresses.state IS NULL" clause can ever match, so zero results.
+    //
+    // config.joinMethods overrides the filter-forced join method
+    // ({ ...filterJoinMethods, ...config.joinMethods }), so we explicitly
+    // set LEFT JOIN here to keep games without progress records in the result.
     const joinMethods: Record<string, "leftJoinAndSelect"> = {};
     if (progressStateFilter?.includes("UNPLAYED")) {
       joinMethods["progresses"] = "leftJoinAndSelect";
