@@ -1,6 +1,6 @@
 import { Module, OnModuleInit } from "@nestjs/common";
 import { ServeStaticModule } from "@nestjs/serve-static";
-import { join } from "path";
+import { join, resolve } from "path";
 import configuration from "../../configuration";
 import { WebUIService } from "./web-ui.service";
 
@@ -9,7 +9,7 @@ import { WebUIService } from "./web-ui.service";
   exports: [WebUIService],
   imports: [
     ServeStaticModule.forRoot({
-      rootPath: join(configuration.VOLUMES.CONFIG, "frontend", "dist"),
+      rootPath: resolve(join(configuration.VOLUMES.CONFIG, "frontend", "dist")),
     }),
   ],
 })
