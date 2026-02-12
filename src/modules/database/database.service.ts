@@ -44,7 +44,9 @@ export class DatabaseService {
 
       switch (configuration.DB.SYSTEM) {
         case "POSTGRESQL":
-          backupFile = await this.backupPostgresql(this.generateBackupFilepath());
+          backupFile = await this.backupPostgresql(
+            this.generateBackupFilepath(),
+          );
           break;
         case "SQLITE":
           backupFile = await this.backupSqlite(this.generateBackupFilepath());
