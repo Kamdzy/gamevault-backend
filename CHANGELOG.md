@@ -8,6 +8,7 @@
 - [#393](https://github.com/Phalcode/gamevault-backend/issues/393) Added .AppImage as supported Linux Portable File. 
 - [#368](https://github.com/Phalcode/gamevault-backend/issues/368) Added an admin API to update news contents.
 - [#256](https://github.com/Phalcode/gamevault-backend/issues/256) Implemented HTTPS support. See Docs for the relevant config variables.
+- [#396](https://github.com/Phalcode/gamevault-backend/issues/396) Fixed Plugin Load Error when plugin directory doesn't exist in development setup.
 - [#397](https://github.com/Phalcode/gamevault-backend/issues/397) Fixed Routes yielding Code 500 when VOLUMES_CONFIG is a relative path.
 - [#400](https://github.com/Phalcode/gamevault-backend/issues/400) Added `GAMES_WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS` configuration variable to customize default Windows installer parameters. 
 
