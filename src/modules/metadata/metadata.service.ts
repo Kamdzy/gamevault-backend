@@ -378,7 +378,7 @@ export class MetadataService {
 
     if (game.type === GameType.WINDOWS_SETUP) {
       metadata.installer_parameters =
-        '/D="%INSTALLDIR%" /S /DIR="%INSTALLDIR%" /SILENT /COMPONENTS=text';
+        configuration.GAMES.WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS;
     }
 
     return metadata;
