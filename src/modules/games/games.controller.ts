@@ -151,7 +151,9 @@ export class GamesController {
           select: { game: { id: true } },
         });
 
-        const excludedGameIds = playedProgresses.map((p) => p.game.id);
+        const excludedGameIds = playedProgresses
+          .filter((p) => p.game != null)
+          .map((p) => p.game.id);
 
         if (excludedGameIds.length > 0) {
           unplayedWhereCondition = { id: Not(In(excludedGameIds)) };
