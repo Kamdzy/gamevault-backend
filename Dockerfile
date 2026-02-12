@@ -33,6 +33,7 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
     # Install the latest PostgreSQL client from the PostgreSQL Global Development Group (PGDG)
     # pg_dump is backward-compatible, so the latest version works with all prior server versions
     && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh \
+    && apt-get update \
     && apt install -y --no-install-recommends postgresql-client-$(apt-cache search --names-only '^postgresql-client-[0-9]+$' | sort -t'-' -k3 -n | tail -1 | grep -oP '\d+$') \
     # Clean up to reduce image size
     && apt clean && rm -rf /var/lib/apt/lists/* \

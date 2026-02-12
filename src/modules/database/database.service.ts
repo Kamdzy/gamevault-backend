@@ -39,23 +39,26 @@ export class DatabaseService {
     this.validatePassword(password);
     await this.disconnect();
 
-    let backupFile: Promise<StreamableFile>;
+    try {
+      let backupFile: StreamableFile;
 
-    switch (configuration.DB.SYSTEM) {
-      case "POSTGRESQL":
-        backupFile = this.backupPostgresql(this.generateBackupFilepath());
-        break;
-      case "SQLITE":
-        backupFile = this.backupSqlite(this.generateBackupFilepath());
-        break;
-      default:
-        throw new InternalServerErrorException(
-          "This server's DB_SYSTEM environment variable is set to an unknown value.",
-        );
+      switch (configuration.DB.SYSTEM) {
+        case "POSTGRESQL":
+          backupFile = await this.backupPostgresql(this.generateBackupFilepath());
+          break;
+        case "SQLITE":
+          backupFile = await this.backupSqlite(this.generateBackupFilepath());
+          break;
+        default:
+          throw new InternalServerErrorException(
+            "This server's DB_SYSTEM environment variable is set to an unknown value.",
+          );
+      }
+
+      return backupFile;
+    } finally {
+      await this.connect();
     }
-
-    await this.connect();
-    return backupFile;
   }
 
   async restore(file: Express.Multer.File, password: string) {
@@ -68,20 +71,23 @@ export class DatabaseService {
     this.validatePassword(password);
     await this.disconnect();
 
-    switch (configuration.DB.SYSTEM) {
-      case "POSTGRESQL":
-        await this.restorePostgresql(file);
-        break;
-      case "SQLITE":
-        await this.restoreSqlite(file);
-        break;
-      default:
-        throw new InternalServerErrorException(
-          "This server's DB_SYSTEM environment variable is set to an unknown value.",
-        );
+    try {
+      switch (configuration.DB.SYSTEM) {
+        case "POSTGRESQL":
+          await this.restorePostgresql(file);
+          break;
+        case "SQLITE":
+          await this.restoreSqlite(file);
+          break;
+        default:
+          throw new InternalServerErrorException(
+            "This server's DB_SYSTEM environment variable is set to an unknown value.",
+          );
+      }
+    } finally {
+      await this.connect();
     }
 
-    await this.connect();
     await this.migrate();
   }
 
