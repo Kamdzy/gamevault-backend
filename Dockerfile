@@ -9,6 +9,7 @@ ENV TZ="Etc/UTC" \
     NPM_CONFIG_PREFIX=/home/node/.npm-global \
     PNPM_HOME=/pnpm \
     SERVER_PORT=8080 \
+    SERVER_HTTPS_PORT=8443 \
     YES=yes \
     PATH="/home/node/.npm-global/bin:/pnpm:$PATH"
 
