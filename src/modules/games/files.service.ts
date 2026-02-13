@@ -374,6 +374,24 @@ export class FilesService implements OnApplicationBootstrap {
         return GameType.LINUX_PORTABLE;
       }
 
+      if (/\(W_SW\)/.test(path)) {
+        this.logger.debug({
+          message: `Detected game type as ${GameType.WINDOWS_SOFTWARE}.`,
+          reason: "(W_SW) override in filename.",
+          game: { id: undefined, path },
+        });
+        return GameType.WINDOWS_SOFTWARE;
+      }
+
+      if (/\(L_SW\)/.test(path)) {
+        this.logger.debug({
+          message: `Detected game type as ${GameType.LINUX_SOFTWARE}.`,
+          reason: "(L_SW) override in filename.",
+          game: { id: undefined, path },
+        });
+        return GameType.LINUX_SOFTWARE;
+      }
+
       // Failsafe for Mock-Files because we cant look into them
       if (configuration.TESTING.MOCK_FILES) {
         this.logger.debug({
