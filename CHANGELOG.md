@@ -20,6 +20,7 @@
 - Stopped using deprecated IGDB API fields: Migrated to non-deprecated age rating, game status, and related structures.
 - [#282](https://github.com/Phalcode/gamevault-backend/issues/282) Implemented a secure admin API to upload game files directly to the server. Added `GAMES_MAX_UPLOAD_SIZE` configuration variable (default: 50 GB).
 - Implemented an admin API to delete game files from disk. The file indexer automatically handles the database cleanup.
+- [#337](https://github.com/Phalcode/gamevault-backend/issues/337) Added Docker Secrets support via the `_FILE` suffix for all environment variables (e.g. `DB_PASSWORD_FILE`, `SERVER_PORT_FILE`).
 
 ## 16.2.0
 
