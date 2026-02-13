@@ -75,6 +75,7 @@ export function getMaxBodySizeInBytes() {
     bytes("10mb"),
     configuration.MEDIA.MAX_SIZE,
     configuration.SAVEFILES.MAX_SIZE,
+    configuration.GAMES.MAX_UPLOAD_SIZE,
   );
 }
 
@@ -199,6 +200,8 @@ const configuration = {
     WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS:
       process.env.GAMES_WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS ||
       '/D="%INSTALLDIR%" /S /DIR="%INSTALLDIR%" /SILENT /COMPONENTS=text',
+    MAX_UPLOAD_SIZE:
+      bytes(toLower(process.env.GAMES_MAX_UPLOAD_SIZE)) ?? bytes("100gb"),
   } as const,
   MEDIA: {
     MAX_SIZE: bytes(toLower(process.env.MEDIA_MAX_SIZE)) ?? bytes("10mb"),

@@ -6,6 +6,7 @@
 
 - Various File Indexing Optimizations
 - [#305](https://github.com/Phalcode/gamevault-backend/issues/305) Fixed backend failing to start when the game directory contains unreadable subdirectories (e.g. `lost+found`). Inaccessible paths are now gracefully skipped with a warning.
+
 - [#393](https://github.com/Phalcode/gamevault-backend/issues/393) Added .AppImage as supported Linux Portable File.
 - [#368](https://github.com/Phalcode/gamevault-backend/issues/368) Added an admin API to update news contents.
 - [#256](https://github.com/Phalcode/gamevault-backend/issues/256) Implemented HTTPS support. See Docs for the relevant config variables.
@@ -17,6 +18,8 @@
 - [#398](https://github.com/Phalcode/gamevault-backend/issues/398) Implemented `WINDOWS_SOFTWARE` and `LINUX_SOFTWARE` game types, and added support for using the type with `(W_SW)` and `(L_SW)` flags in the filename.
 - [#355](https://github.com/Phalcode/gamevault-backend/issues/355) Implemented Time To Beat from IGDB as average playtime metadata (in minutes).
 - Stopped using deprecated IGDB API fields: Migrated to non-deprecated age rating, game status, and related structures.
+- [#282](https://github.com/Phalcode/gamevault-backend/issues/282) Implemented a secure admin API to upload game files directly to the server. Added `GAMES_MAX_UPLOAD_SIZE` configuration variable (default: 50 GB).
+- Implemented an admin API to delete game files from disk. The file indexer automatically handles the database cleanup.
 
 ## 16.2.0
 

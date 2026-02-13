@@ -1,19 +1,26 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Headers,
   Logger,
+  MaxFileSizeValidator,
   Param,
+  ParseFilePipe,
+  Post,
   Put,
   Request,
   Res,
   StreamableFile,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConsumes,
   ApiHeader,
   ApiOkResponse,
   ApiOperation,
@@ -32,9 +39,12 @@ import {
 } from "nestjs-paginate";
 import { In, Not, Repository } from "typeorm";
 
+import { FileInterceptor } from "@nestjs/platform-express";
+import bytes from "bytes";
 import { isArray } from "lodash";
 import { FilterSuffix } from "nestjs-paginate/lib/filter";
 import configuration from "../../configuration";
+import { DisableApiIf } from "../../decorators/disable-api-if.decorator";
 import { MinimumRole } from "../../decorators/minimum-role.decorator";
 import { PaginateQueryOptions } from "../../decorators/pagination.decorator";
 import { ApiOkResponsePaginated } from "../../globals";
@@ -77,6 +87,68 @@ export class GamesController {
   @MinimumRole(Role.ADMIN)
   async putFilesReindex() {
     return this.filesService.indexAllFiles();
+  }
+
+  /** Deletes a game file from disk. Admins only. */
+  @Delete(":game_id")
+  @ApiOperation({
+    summary: "deletes a game file from disk",
+    description:
+      "Permanently deletes the physical game file from the filesystem. The file indexer will automatically detect the missing file and soft-delete the game from the database. Only administrators can use this endpoint. The server must have write permissions on the files volume.",
+    operationId: "deleteGame",
+  })
+  @MinimumRole(Role.ADMIN)
+  @DisableApiIf(configuration.SERVER.DEMO_MODE_ENABLED)
+  async deleteGame(@Param() params: GameIdDto): Promise<void> {
+    return this.filesService.deleteGameFile(Number(params.game_id));
+  }
+
+  /** Upload a game file to the server. */
+  @Post()
+  @ApiOperation({
+    summary: "upload a game file to the server",
+    description: `Upload a game file directly to the game library. Only administrators can use this endpoint. The file must have a supported game file format. The server must have write permissions on the files volume.`,
+    operationId: "postGameUpload",
+  })
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      properties: {
+        file: {
+          type: "string",
+          format: "binary",
+          description: "The game file to upload",
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    schema: {
+      properties: {
+        path: {
+          type: "string",
+          description: "The path where the game file was saved",
+        },
+      },
+    },
+  })
+  @UseInterceptors(FileInterceptor("file"))
+  @MinimumRole(Role.ADMIN)
+  @DisableApiIf(configuration.SERVER.DEMO_MODE_ENABLED)
+  async postGameUpload(
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({
+            maxSize: configuration.GAMES.MAX_UPLOAD_SIZE,
+            message: `File exceeds maximum allowed upload size of ${bytes(configuration.GAMES.MAX_UPLOAD_SIZE, { unit: "GB", thousandsSeparator: "." })}.`,
+          }),
+        ],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.filesService.upload(file);
   }
 
   /** Get paginated games list based on the given query parameters. */

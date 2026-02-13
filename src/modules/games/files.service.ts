@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
@@ -7,7 +8,16 @@ import {
 } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { Response } from "express";
-import { Stats, createReadStream, pathExists, rm, stat } from "fs-extra";
+import {
+  Stats,
+  access,
+  constants,
+  createReadStream,
+  pathExists,
+  rm,
+  stat,
+  writeFile,
+} from "fs-extra";
 import { debounce, toLower } from "lodash";
 import { add, list } from "node-7z";
 import path, { basename } from "path";
@@ -113,6 +123,100 @@ export class FilesService implements OnApplicationBootstrap {
 
     this.runDebouncedIntegrityCheck.cancel();
     await this.checkIntegrity(files);
+  }
+
+  /**
+   * Deletes a game file from disk.
+   * The file indexer will automatically soft-delete the game from the database
+   * once it detects the file is missing.
+   */
+  public async deleteGameFile(gameId: number): Promise<void> {
+    const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
+      loadDeletedEntities: false,
+    });
+
+    if (!game.file_path) {
+      throw new NotFoundException(
+        `Game with id ${gameId} has no file path associated.`,
+      );
+    }
+
+    if (!(await pathExists(game.file_path))) {
+      throw new NotFoundException(
+        `Game file not found on disk at "${game.file_path}".`,
+      );
+    }
+
+    // Verify write permissions on the files volume
+    try {
+      await access(configuration.VOLUMES.FILES, constants.W_OK);
+    } catch {
+      throw new BadRequestException(
+        `The server does not have write permissions on the files volume "${configuration.VOLUMES.FILES}". Game deletion requires write access.`,
+      );
+    }
+
+    await rm(game.file_path);
+    this.logger.log({
+      message: "Game file deleted from disk.",
+      gameId,
+      path: game.file_path,
+    });
+  }
+
+  /**
+   * Uploads a game file to the files volume.
+   * Only supported file formats are accepted. The filename must be valid.
+   * Write permissions on the files volume are required.
+   */
+  public async upload(file: Express.Multer.File): Promise<{ path: string }> {
+    const filename = filenameSanitizer(file.originalname);
+
+    if (!filename) {
+      throw new BadRequestException(
+        "The uploaded file has an invalid filename.",
+      );
+    }
+
+    const ext = toLower(path.extname(filename));
+    if (!this.supportedFormatsSet.has(ext)) {
+      throw new BadRequestException(
+        `Unsupported file format "${ext}". Supported formats: ${Array.from(this.supportedFormatsSet).join(", ")}`,
+      );
+    }
+
+    // Verify write permissions on the files volume
+    try {
+      await access(configuration.VOLUMES.FILES, constants.W_OK);
+    } catch {
+      throw new BadRequestException(
+        `The server does not have write permissions on the files volume "${configuration.VOLUMES.FILES}". Game upload requires write access.`,
+      );
+    }
+
+    const targetPath = path.join(configuration.VOLUMES.FILES, filename);
+
+    // Prevent overwriting existing files
+    if (await pathExists(targetPath)) {
+      throw new BadRequestException(
+        `A file named "${filename}" already exists in the game library.`,
+      );
+    }
+
+    await writeFile(targetPath, file.buffer);
+
+    this.logger.log({
+      message: "Game file uploaded successfully.",
+      filename,
+      size: file.size,
+      path: targetPath,
+    });
+
+    // Trigger indexing of the newly uploaded file
+    const stats = await stat(targetPath);
+    await this.index(targetPath, stats);
+
+    return { path: targetPath };
   }
 
   /** Indexes a single file and updates the database accordingly. */
