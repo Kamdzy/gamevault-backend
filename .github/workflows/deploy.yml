@@ -62,6 +62,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           platforms: ${{ matrix.platform }}
+          tags: |
+            phalcode/gamevault-backend
+            ghcr.io/phalcode/gamevault-backend
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
