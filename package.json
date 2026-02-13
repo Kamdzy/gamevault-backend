@@ -129,29 +129,6 @@
     "ts-node": "^10.9.2",
     "typescript": "~5.9.3"
   },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "roots": [
-      "src",
-      ".local/plugins"
-    ],
-    "setupFiles": [
-      "./src/testing/setup-jest.ts"
-    ],
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      ".+\\.ts$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "**/*.ts"
-    ],
-    "coverageDirectory": "./coverage",
-    "testEnvironment": "node"
-  },
   "simple-git-hooks": {
     "pre-commit": "pnpm run format && pnpm run lint && pnpm run test"
   },
