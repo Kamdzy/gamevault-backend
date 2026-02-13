@@ -31,8 +31,12 @@ export class IgdbMetadataProviderService extends MetadataProvider {
   readonly fieldsToInclude = [
     "*",
     "age_ratings.*",
+    "age_ratings.organization.*",
+    "age_ratings.rating_category.*",
+    "age_ratings.rating_category.organization.*",
     "cover.*",
     "genres.*",
+    "game_status.*",
     "involved_companies.*",
     "involved_companies.company.*",
     "keywords.*",
@@ -168,7 +172,9 @@ export class IgdbMetadataProviderService extends MetadataProvider {
           : game.summary || game.storyline || null,
       rating: game.total_rating,
       url_websites: game.websites?.map((website) => website.url),
-      early_access: [2, 3, 4].includes(game.status),
+      early_access: ["alpha", "beta", "early access"].includes(
+        game.game_status?.status?.toLowerCase(),
+      ),
       url_screenshots: [
         ...(game.screenshots || []),
         ...(game.artworks || []),
@@ -298,7 +304,9 @@ export class IgdbMetadataProviderService extends MetadataProvider {
     const ages = ageRatings
       .map((rating) =>
         GameVaultIgdbAgeRatingMap.find(
-          (entry) => entry.igdbEnumValue === rating.rating,
+          (entry) =>
+            entry.ratingName.toLowerCase() ===
+            rating.rating_category?.rating?.toLowerCase(),
         ),
       )
       .filter((entry) => entry != null)

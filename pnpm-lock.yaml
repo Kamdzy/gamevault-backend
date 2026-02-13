@@ -45,8 +45,8 @@ importers:
         specifier: ^11.1.13
         version: 11.1.13(@nestjs/common@11.1.13(class-transformer@0.5.1)(class-validator@0.14.3)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.13)(@nestjs/platform-socket.io@11.1.13)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@phalcode/ts-igdb-client':
-        specifier: ^1.0.24
-        version: 1.0.24
+        specifier: ^1.0.26
+        version: 1.0.26
       bcrypt:
         specifier: ^6.0.0
         version: 6.0.0
@@ -75,8 +75,8 @@ importers:
         specifier: ^1.4.7
         version: 1.4.7
       dotenv:
-        specifier: ^17.3.0
-        version: 17.3.0
+        specifier: ^17.3.1
+        version: 17.3.1
       express:
         specifier: ^5.2.1
         version: 5.2.1
@@ -1068,11 +1068,11 @@ packages:
     engines: {node: ^14.18.0 || >=16.10.0, npm: '>=5.10.0'}
     hasBin: true
 
-  '@phalcode/ts-apicalypse@1.0.24':
-    resolution: {integrity: sha512-eToaD6K4oa8k3CfGJ+GnXS1WvqYJIfL+mbrb1HzVsJz6Z427xzp8vL9pgwJErG8zYEtZVBf636ezjVcETpgMZQ==}
+  '@phalcode/ts-apicalypse@1.0.26':
+    resolution: {integrity: sha512-RdqkuunEYu63hRs4tYZ6FLTC17ynC6AJ/YUppRGSIyr6pm5pI/vB1qlEaeUr/f4JJsNmbFwGjnMJdXvoP1LmWA==}
 
-  '@phalcode/ts-igdb-client@1.0.24':
-    resolution: {integrity: sha512-hNCQnM+NLtVBQTYE1gKoTnQUKeprCjHaTzUsCl9oNlAUEzaAdsaYKNrcUiwSNxox3DdafA9vqyQo2Qd2jSuRIw==}
+  '@phalcode/ts-igdb-client@1.0.26':
+    resolution: {integrity: sha512-ITBazxhafHDBVJFI6THrLOT8OuO4zhD9pOeKQUFJ80soKhBevvbJz3tzkt24fF783Hoqaja8rWmGSwcN04d5gA==}
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -2151,8 +2151,8 @@ packages:
     resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
     engines: {node: '>=12'}
 
-  dotenv@17.3.0:
-    resolution: {integrity: sha512-i3z5dx/8F45f+Dj0B/qG8oKip9luzyHz6dfJMOKG7zQW/12tT7CrIjs/0J10uNK/Z5O7O0UtfEmx6yFKRQCl4g==}
+  dotenv@17.3.1:
+    resolution: {integrity: sha512-IO8C/dzEb6O3F9/twg6ZLXz164a2fhTnEWb95H23Dm4OuN+92NmEAlTrupP9VW6Jm3sO26tQlqyvyi4CsnY9GA==}
     engines: {node: '>=12'}
 
   dunder-proto@1.0.1:
@@ -5600,15 +5600,15 @@ snapshots:
     dependencies:
       consola: 3.4.2
 
-  '@phalcode/ts-apicalypse@1.0.24':
+  '@phalcode/ts-apicalypse@1.0.26':
     dependencies:
       axios: 1.13.2
     transitivePeerDependencies:
       - debug
 
-  '@phalcode/ts-igdb-client@1.0.24':
+  '@phalcode/ts-igdb-client@1.0.26':
     dependencies:
-      '@phalcode/ts-apicalypse': 1.0.24
+      '@phalcode/ts-apicalypse': 1.0.26
       axios: 1.13.2
     transitivePeerDependencies:
       - debug
@@ -6735,7 +6735,7 @@ snapshots:
 
   dotenv@16.6.1: {}
 
-  dotenv@17.3.0: {}
+  dotenv@17.3.1: {}
 
   dunder-proto@1.0.1:
     dependencies:
