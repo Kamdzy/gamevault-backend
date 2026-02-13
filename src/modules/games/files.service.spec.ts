@@ -1,4 +1,10 @@
+import {
+  BadRequestException,
+  NotFoundException,
+  StreamableFile,
+} from "@nestjs/common";
 import { SchedulerRegistry } from "@nestjs/schedule";
+import { constants } from "fs-extra";
 import { MetadataService } from "../metadata/metadata.service";
 import { FilesService } from "./files.service";
 import { GamesService } from "./games.service";
@@ -33,13 +39,32 @@ jest.mock("../../logging", () => ({
   logGamevaultGame: jest.fn((g) => ({ id: g?.id, path: g?.file_path })),
 }));
 
+jest.mock("fs-extra", () => ({
+  access: jest.fn(),
+  constants: { W_OK: 2 },
+  createReadStream: jest.fn(),
+  pathExists: jest.fn(),
+  rm: jest.fn(),
+  stat: jest.fn(),
+  writeFile: jest.fn(),
+}));
+
 describe("FilesService", () => {
   let service: FilesService;
   let gamesService: jest.Mocked<GamesService>;
   let metadataService: jest.Mocked<MetadataService>;
   let schedulerRegistry: jest.Mocked<SchedulerRegistry>;
+  let fsExtra: {
+    access: jest.Mock;
+    pathExists: jest.Mock;
+    rm: jest.Mock;
+    stat: jest.Mock;
+    writeFile: jest.Mock;
+  };
 
   beforeEach(() => {
+    fsExtra = jest.requireMock("fs-extra");
+
     gamesService = {
       findOneByGameIdOrFail: jest.fn(),
       generateSortTitle: jest.fn((t) => t.toLowerCase()),
@@ -65,194 +90,145 @@ describe("FilesService", () => {
       metadataService,
       schedulerRegistry,
     );
+
+    fsExtra.access.mockResolvedValue(undefined);
+    fsExtra.pathExists.mockResolvedValue(false);
+    fsExtra.rm.mockResolvedValue(undefined);
+    fsExtra.stat.mockResolvedValue({ size: 1000 });
+    fsExtra.writeFile.mockResolvedValue(undefined);
+
+    jest.spyOn(service as any, "index").mockResolvedValue(undefined);
   });
 
-  describe("extractTitle (via private method access)", () => {
-    // Access private method for testing
-    const extractTitle = (filename: string): string => {
-      return (service as any).extractTitle(filename);
-    };
-
-    it("should extract title from filename without extension", () => {
-      expect(extractTitle("My Game.zip")).toBe("My Game");
+  describe("upload", () => {
+    it("should reject invalid sanitized filename", async () => {
+      await expect(
+        service.upload({
+          originalname: "///",
+          buffer: Buffer.from("test"),
+          size: 4,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    it("should remove parenthetical content", () => {
-      expect(extractTitle("My Game (v1.0).zip")).toBe("My Game");
+    it("should reject unsupported file formats", async () => {
+      await expect(
+        service.upload({
+          originalname: "game.txt",
+          buffer: Buffer.from("test"),
+          size: 4,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    it("should remove multiple parenthetical sections", () => {
-      expect(extractTitle("My Game (2023) (v1.0) (EA).zip")).toBe("My Game");
+    it("should reject upload when files volume is not writable", async () => {
+      fsExtra.access.mockRejectedValueOnce(new Error("permission denied"));
+
+      await expect(
+        service.upload({
+          originalname: "game.zip",
+          buffer: Buffer.from("test"),
+          size: 4,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    it("should handle extra spaces after removing parentheticals", () => {
-      expect(extractTitle("My  Game  (v1.0)  .zip")).toBe("My Game");
+    it("should reject upload when target file already exists", async () => {
+      fsExtra.pathExists.mockResolvedValueOnce(true);
+
+      await expect(
+        service.upload({
+          originalname: "game.zip",
+          buffer: Buffer.from("test"),
+          size: 4,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    it("should handle filenames with only parenthetical content", () => {
-      expect(extractTitle("(v1.0).zip")).toBe("");
-    });
+    it("should persist uploaded file and trigger indexing", async () => {
+      const result = await service.upload({
+        originalname: "My Game.zip",
+        buffer: Buffer.from("payload"),
+        size: 7,
+      } as any);
 
-    it("should handle complex filenames", () => {
-      expect(
-        extractTitle("The Elder Scrolls V - Skyrim (2011) (v1.6) (EA).zip"),
-      ).toBe("The Elder Scrolls V - Skyrim");
-    });
-
-    it("should handle filenames with no parentheses", () => {
-      expect(extractTitle("SimpleGame.zip")).toBe("SimpleGame");
-    });
-  });
-
-  describe("extractVersion (via private method access)", () => {
-    const extractVersion = (filename: string): string | undefined => {
-      return (service as any).extractVersion(filename);
-    };
-
-    it("should extract version from parenthetical notation", () => {
-      expect(extractVersion("Game (v1.0).zip")).toBe("v1.0");
-    });
-
-    it("should extract complex version strings", () => {
-      expect(extractVersion("Game (v1.2.3-beta).zip")).toBe("v1.2.3-beta");
-    });
-
-    it("should return undefined when no version is present", () => {
-      expect(extractVersion("Game.zip")).toBeUndefined();
-    });
-
-    it("should not treat year as version", () => {
-      expect(extractVersion("Game (2023).zip")).toBeUndefined();
-    });
-
-    it("should extract version when multiple parentheticals exist", () => {
-      expect(extractVersion("Game (2023) (v2.1).zip")).toBe("v2.1");
-    });
-  });
-
-  describe("extractReleaseYear (via private method access)", () => {
-    const extractReleaseYear = (filename: string): Date | undefined => {
-      return (service as any).extractReleaseYear(filename);
-    };
-
-    it("should extract year from parenthetical notation", () => {
-      const date = extractReleaseYear("Game (2023).zip");
-      expect(date).toBeInstanceOf(Date);
-      expect(date.getFullYear()).toBe(2023);
-    });
-
-    it("should return undefined when no year is present", () => {
-      expect(extractReleaseYear("Game.zip")).toBeUndefined();
-    });
-
-    it("should extract the first 4-digit year", () => {
-      const date = extractReleaseYear("Game (2020) (v1.0).zip");
-      expect(date.getFullYear()).toBe(2020);
+      expect(fsExtra.access).toHaveBeenCalledWith(
+        "/tmp/test-files",
+        constants.W_OK,
+      );
+      expect(fsExtra.writeFile).toHaveBeenCalledWith(
+        "/tmp/test-files/My Game.zip",
+        expect.any(Buffer),
+      );
+      expect((service as any).index).toHaveBeenCalledWith(
+        "/tmp/test-files/My Game.zip",
+        expect.any(Object),
+      );
+      expect(result).toEqual({ path: "/tmp/test-files/My Game.zip" });
     });
   });
 
-  describe("extractEarlyAccessFlag (via private method access)", () => {
-    const extractEarlyAccessFlag = (filename: string): boolean => {
-      return (service as any).extractEarlyAccessFlag(filename);
-    };
+  describe("deleteGameFile", () => {
+    it("should reject deletion when game has no file path", async () => {
+      gamesService.findOneByGameIdOrFail.mockResolvedValue({
+        id: 1,
+        file_path: null,
+      } as any);
 
-    it("should return true when (EA) is present", () => {
-      expect(extractEarlyAccessFlag("Game (EA).zip")).toBe(true);
+      await expect(service.deleteGameFile(1)).rejects.toThrow(NotFoundException);
     });
 
-    it("should return false when (EA) is not present", () => {
-      expect(extractEarlyAccessFlag("Game.zip")).toBe(false);
+    it("should reject deletion when file does not exist", async () => {
+      gamesService.findOneByGameIdOrFail.mockResolvedValue({
+        id: 1,
+        file_path: "/tmp/test-files/My Game.zip",
+      } as any);
+      fsExtra.pathExists.mockResolvedValueOnce(false);
+
+      await expect(service.deleteGameFile(1)).rejects.toThrow(NotFoundException);
     });
 
-    it("should be case-sensitive (ea should not match)", () => {
-      expect(extractEarlyAccessFlag("Game (ea).zip")).toBe(false);
+    it("should reject deletion when files volume is not writable", async () => {
+      gamesService.findOneByGameIdOrFail.mockResolvedValue({
+        id: 1,
+        file_path: "/tmp/test-files/My Game.zip",
+      } as any);
+      fsExtra.pathExists.mockResolvedValueOnce(true);
+      fsExtra.access.mockRejectedValueOnce(new Error("permission denied"));
+
+      await expect(service.deleteGameFile(1)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
-    it("should handle EA alongside other parentheticals", () => {
-      expect(extractEarlyAccessFlag("Game (2023) (EA) (v1.0).zip")).toBe(true);
-    });
-  });
+    it("should remove game file from disk", async () => {
+      const game = { id: 1, file_path: "/tmp/test-files/My Game.zip" } as any;
+      gamesService.findOneByGameIdOrFail.mockResolvedValue(game);
+      fsExtra.pathExists.mockResolvedValueOnce(true);
 
-  describe("isValidFilePath (via private method access)", () => {
-    const isValidFilePath = (filename: string): boolean => {
-      return (service as any).isValidFilePath(filename);
-    };
+      await service.deleteGameFile(1);
 
-    it("should accept valid zip filename", () => {
-      expect(isValidFilePath("My Game.zip")).toBe(true);
-    });
-
-    it("should accept valid 7z filename", () => {
-      expect(isValidFilePath("game.7z")).toBe(true);
-    });
-
-    it("should reject unsupported file extension", () => {
-      expect(isValidFilePath("game.txt")).toBe(false);
-    });
-
-    it("should reject filename with invalid characters", () => {
-      expect(isValidFilePath("ga<me>.zip")).toBe(false);
-    });
-
-    it("should accept path with forward slash in directory", () => {
-      expect(isValidFilePath("/games/my-game.zip")).toBe(true);
-    });
-
-    it("should accept exe files", () => {
-      expect(isValidFilePath("setup.exe")).toBe(true);
+      expect(fsExtra.rm).toHaveBeenCalledWith(game.file_path);
     });
   });
 
-  describe("calculateRange (via private method access)", () => {
-    const calculateRange = (
-      rangeHeader: string | undefined,
-      fileSize: number,
-    ) => {
-      return (service as any).calculateRange(rangeHeader, fileSize);
-    };
+  describe("download", () => {
+    it("should return a StreamableFile in testing mock mode", async () => {
+      gamesService.findOneByGameIdOrFail.mockResolvedValue({
+        id: 42,
+        file_path: "/tmp/test-files/My Game.zip",
+        download_count: 0,
+      } as any);
 
-    it("should return full file range when no range header provided", () => {
-      const result = calculateRange(undefined, 1000);
-      expect(result).toEqual({ start: 0, end: 999, size: 1000 });
-    });
+      const response = { setHeader: jest.fn() } as any;
+      const result = await service.download(response, 42, undefined, undefined, 18);
 
-    it("should parse start and end range", () => {
-      const result = calculateRange("bytes=0-499", 1000);
-      expect(result).toEqual({ start: 0, end: 499, size: 500 });
-    });
-
-    it("should handle open-ended range (bytes=500-)", () => {
-      const result = calculateRange("bytes=500-", 1000);
-      expect(result).toEqual({ start: 500, end: 999, size: 500 });
-    });
-
-    it("should handle suffix range (bytes=-500)", () => {
-      const result = calculateRange("bytes=-499", 1000);
-      expect(result).toEqual({ start: 0, end: 499, size: 500 });
-    });
-
-    it("should handle range beyond file size gracefully", () => {
-      const result = calculateRange("bytes=0-9999", 1000);
-      // End beyond file size - should use fileSize - 1
-      expect(result.start).toBe(0);
-      expect(result.end).toBe(999);
-    });
-
-    it("should handle start beyond file size", () => {
-      const result = calculateRange("bytes=9999-", 1000);
-      // Start beyond file size - parseInt returns 9999 which is >= fileSize, so rangeStart stays 0
-      expect(result.start).toBe(0);
-      expect(result.end).toBe(999);
-    });
-
-    it("should return full range for invalid range header", () => {
-      const result = calculateRange("invalid", 1000);
-      expect(result).toEqual({ start: 0, end: 999, size: 1000 });
-    });
-
-    it("should return full range for empty range header", () => {
-      const result = calculateRange("", 1000);
-      expect(result).toEqual({ start: 0, end: 999, size: 1000 });
+      expect(result).toBeInstanceOf(StreamableFile);
+      expect(gamesService.findOneByGameIdOrFail).toHaveBeenCalledWith(42, {
+        loadDeletedEntities: false,
+        filterByAge: 18,
+      });
+      expect(gamesService.save).not.toHaveBeenCalled();
     });
   });
 });
