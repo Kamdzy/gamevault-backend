@@ -5,6 +5,7 @@
 ### Changes
 
 - Various File Indexing Optimizations
+- [#305](https://github.com/Phalcode/gamevault-backend/issues/305) Fixed backend failing to start when the game directory contains unreadable subdirectories (e.g. `lost+found`). Inaccessible paths are now gracefully skipped with a warning.
 - [#393](https://github.com/Phalcode/gamevault-backend/issues/393) Added .AppImage as supported Linux Portable File.
 - [#368](https://github.com/Phalcode/gamevault-backend/issues/368) Added an admin API to update news contents.
 - [#256](https://github.com/Phalcode/gamevault-backend/issues/256) Implemented HTTPS support. See Docs for the relevant config variables.

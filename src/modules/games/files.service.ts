@@ -630,7 +630,7 @@ export class FilesService implements OnApplicationBootstrap {
 
       const { readdirp } = await import("readdirp");
 
-      const entries = readdirp(configuration.VOLUMES.FILES, {
+      const stream = readdirp(configuration.VOLUMES.FILES, {
         type: "files",
         depth: configuration.GAMES.SEARCH_RECURSIVE ? undefined : 0,
         fileFilter: (entry) => this.isValidFilePath(entry.basename),
@@ -638,21 +638,45 @@ export class FilesService implements OnApplicationBootstrap {
       });
 
       const files: File[] = [];
-      for await (const entry of entries) {
-        if (!entry.stats) {
-          this.logger.warn({
-            message: "Skipping file without stats during indexing.",
-            path: entry.fullPath,
-          });
-          continue;
-        }
 
-        files.push({
-          path: entry.fullPath,
-          size: BigInt(entry.stats.size),
+      return new Promise<File[]>((resolve) => {
+        stream.on("data", (entry) => {
+          if (!entry.stats) {
+            this.logger.warn({
+              message: "Skipping file without stats during indexing.",
+              path: entry.fullPath,
+            });
+            return;
+          }
+
+          files.push({
+            path: entry.fullPath,
+            size: BigInt(entry.stats.size),
+          });
         });
-      }
-      return files;
+
+        stream.on("warn", (warning) => {
+          this.logger.warn({
+            message:
+              "Skipping inaccessible path during file scanning. Check directory permissions.",
+            path: warning?.path,
+            error: warning?.message || String(warning),
+          });
+        });
+
+        stream.on("error", (error) => {
+          this.logger.error({
+            message:
+              "Error during file scanning. Continuing with files found so far.",
+            error,
+          });
+          resolve(files);
+        });
+
+        stream.on("end", () => {
+          resolve(files);
+        });
+      });
     } catch (error) {
       this.logger.error({ message: "Error reading files.", error });
       return [];
