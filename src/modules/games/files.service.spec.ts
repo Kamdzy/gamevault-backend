@@ -175,7 +175,9 @@ describe("FilesService", () => {
         file_path: null,
       } as any);
 
-      await expect(service.deleteGameFile(1)).rejects.toThrow(NotFoundException);
+      await expect(service.deleteGameFile(1)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it("should reject deletion when file does not exist", async () => {
@@ -185,7 +187,9 @@ describe("FilesService", () => {
       } as any);
       fsExtra.pathExists.mockResolvedValueOnce(false);
 
-      await expect(service.deleteGameFile(1)).rejects.toThrow(NotFoundException);
+      await expect(service.deleteGameFile(1)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it("should reject deletion when files volume is not writable", async () => {
@@ -221,7 +225,13 @@ describe("FilesService", () => {
       } as any);
 
       const response = { setHeader: jest.fn() } as any;
-      const result = await service.download(response, 42, undefined, undefined, 18);
+      const result = await service.download(
+        response,
+        42,
+        undefined,
+        undefined,
+        18,
+      );
 
       expect(result).toBeInstanceOf(StreamableFile);
       expect(gamesService.findOneByGameIdOrFail).toHaveBeenCalledWith(42, {
