@@ -19,6 +19,14 @@ jobs:
   docker:
     needs: test
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    outputs:
+      version: ${{ steps.package-version.outputs.current-version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,41 +57,87 @@ jobs:
           username: phalcode
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine Docker tags
-        id: tags
-        run: |
-          BRANCH="${GITHUB_REF#refs/heads/}"
-          case "$BRANCH" in
-            master|hotfix)
-              echo "tags<<EOF" >> $GITHUB_OUTPUT
-              echo "phalcode/gamevault-backend:latest" >> $GITHUB_OUTPUT
-              echo "phalcode/gamevault-backend:${{ steps.package-version.outputs.current-version }}" >> $GITHUB_OUTPUT
-              echo "ghcr.io/phalcode/gamevault-backend:latest" >> $GITHUB_OUTPUT
-              echo "ghcr.io/phalcode/gamevault-backend:${{ steps.package-version.outputs.current-version }}" >> $GITHUB_OUTPUT
-              echo "EOF" >> $GITHUB_OUTPUT
-              ;;
-            develop)
-              echo "tags<<EOF" >> $GITHUB_OUTPUT
-              echo "phalcode/gamevault-backend:unstable" >> $GITHUB_OUTPUT
-              echo "ghcr.io/phalcode/gamevault-backend:unstable" >> $GITHUB_OUTPUT
-              echo "EOF" >> $GITHUB_OUTPUT
-              ;;
-            early-access)
-              echo "tags<<EOF" >> $GITHUB_OUTPUT
-              echo "phalcode/gamevault-backend:early-access" >> $GITHUB_OUTPUT
-              echo "ghcr.io/phalcode/gamevault-backend:early-access" >> $GITHUB_OUTPUT
-              echo "EOF" >> $GITHUB_OUTPUT
-              ;;
-          esac
-
-      - name: Build and Push
+      - name: Build and Push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: phalcode
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: phalcode
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          VERSION="${{ needs.docker.outputs.version }}"
+
+          push_manifest() {
+            local REPO=$1
+            local TAGS=$2
+            local ARGS=""
+            for tag in $TAGS; do
+              ARGS="$ARGS -t $REPO:$tag"
+            done
+            
+            docker buildx imagetools create $ARGS \
+              $(printf "$REPO@sha256:%s " $(ls /tmp/digests))
+          }
+
+          case "$BRANCH" in
+            master|hotfix)
+              push_manifest "phalcode/gamevault-backend" "latest $VERSION"
+              push_manifest "ghcr.io/phalcode/gamevault-backend" "latest $VERSION"
+              ;;
+            develop)
+              push_manifest "phalcode/gamevault-backend" "unstable"
+              push_manifest "ghcr.io/phalcode/gamevault-backend" "unstable"
+              ;;
+            early-access)
+              push_manifest "phalcode/gamevault-backend" "early-access"
+              push_manifest "ghcr.io/phalcode/gamevault-backend" "early-access"
+              ;;
+          esac
 
       - name: Create Github Tag & Release
         if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/hotfix'
@@ -98,7 +152,7 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_BOT_WEBHOOK }}
         with:
-          args: "<@&1128857090090340382> New Release: {{ EVENT_PAYLOAD.repository.full_name }} v${{ steps.package-version.outputs.current-version }} has been deployed. Here are the changes: https://github.com/{{ EVENT_PAYLOAD.repository.full_name }}/releases/tag/${{ steps.package-version.outputs.current-version }}"
+          args: "<@&1128857090090340382> New Release: {{ EVENT_PAYLOAD.repository.full_name }} v$VERSION has been deployed. Here are the changes: https://github.com/{{ EVENT_PAYLOAD.repository.full_name }}/releases/tag/$VERSION"
 
   sonarcloud:
     needs: test
