@@ -40,11 +40,7 @@ const config: Config = {
     "!**/auth/guards/refresh-token.guard.ts", // Trivial super.canActivate() wrapper
 
     // --- Metadata providers ---
-    "!**/metadata/providers/igdb/**", // IGDB provider - calls external IGDB API
     "!**/metadata/providers/rawg-legacy/**", // RAWG legacy provider - deprecated external API
-
-    // --- Web UI ---
-    "!**/web-ui/**", // Frontend bundle service - filesystem + network heavy
   ],
   coverageDirectory: "./coverage",
   testEnvironment: "node",
