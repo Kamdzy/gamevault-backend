@@ -14,6 +14,8 @@
 - [#357](https://github.com/Phalcode/gamevault-backend/issues/357) Fixed UNPLAYED games not being filtered correctly
 - [#388](https://github.com/Phalcode/gamevault-backend/issues/388) Fixed PG Backups not working on newer Postgres Versions.
 - [#398](https://github.com/Phalcode/gamevault-backend/issues/398) Implemented `WINDOWS_SOFTWARE` and `LINUX_SOFTWARE` game types, and added support for using the type with `(W_SW)` and `(L_SW)` flags in the filename.
+- [#355](https://github.com/Phalcode/gamevault-backend/issues/355) Implemented Time To Beat from IGDB as average playtime metadata (in minutes).
+- Stopped using deprecated IGDB API fields: Migrated to non-deprecated age rating, game status, and related structures.
 
 ## 16.2.0
 
