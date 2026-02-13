@@ -1,8 +1,30 @@
 import bytes from "bytes";
 import { createHash, randomBytes } from "crypto";
+import { readFileSync } from "fs-extra";
 import { toLower } from "lodash";
 import packageJson from "../package.json";
 import globals from "./globals";
+
+/**
+ * Resolves an environment variable with Docker Secrets support.
+ * If `<name>_FILE` is set, reads the file at that path and returns its
+ * trimmed contents. Otherwise returns the value of `<name>` directly.
+ * This allows sensitive values (passwords, API keys, etc.) to be provided
+ * via Docker Secrets without changing the existing configuration structure.
+ */
+function resolveEnv(name: string): string | undefined {
+  const filePath = process.env[`${name}_FILE`];
+  if (filePath) {
+    try {
+      return readFileSync(filePath, "utf-8").trim();
+    } catch (error) {
+      throw new Error(
+        `Failed to read Docker secret from ${name}_FILE="${filePath}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return process.env[name];
+}
 
 function parseBooleanEnvVariable(
   environmentVariable: string,
@@ -81,176 +103,184 @@ export function getMaxBodySizeInBytes() {
 
 const configuration = {
   SERVER: {
-    PORT: parseNumber(process.env.SERVER_PORT, 8080),
+    PORT: parseNumber(resolveEnv("SERVER_PORT"), 8080),
     VERSION: process.env.npm_package_version || packageJson.version,
     DEMO_MODE_ENABLED: parseBooleanEnvVariable(
-      process.env.SERVER_DEMO_MODE_ENABLED,
+      resolveEnv("SERVER_DEMO_MODE_ENABLED"),
     ),
-    LOG_LEVEL: toLower(process.env.SERVER_LOG_LEVEL) || "info",
+    LOG_LEVEL: toLower(resolveEnv("SERVER_LOG_LEVEL")) || "info",
     LOG_FILES_ENABLED: parseBooleanEnvVariable(
-      process.env.SERVER_LOG_FILES_ENABLED,
+      resolveEnv("SERVER_LOG_FILES_ENABLED"),
       true,
     ),
     REQUEST_LOG_FORMAT:
-      process.env.SERVER_REQUEST_LOG_FORMAT || globals.LOGGING_FORMAT,
+      resolveEnv("SERVER_REQUEST_LOG_FORMAT") || globals.LOGGING_FORMAT,
     CORS_ALLOWED_ORIGINS: parseList(
-      process.env.SERVER_CORS_ALLOWED_ORIGINS,
+      resolveEnv("SERVER_CORS_ALLOWED_ORIGINS"),
       [],
     ),
     REGISTRATION_DISABLED: parseBooleanEnvVariable(
-      process.env.SERVER_REGISTRATION_DISABLED,
+      resolveEnv("SERVER_REGISTRATION_DISABLED"),
     ),
     ACCOUNT_ACTIVATION_DISABLED: parseBooleanEnvVariable(
-      process.env.SERVER_ACCOUNT_ACTIVATION_DISABLED,
+      resolveEnv("SERVER_ACCOUNT_ACTIVATION_DISABLED"),
     ),
-    ADMIN_USERNAME: process.env.SERVER_ADMIN_USERNAME || undefined,
-    ADMIN_PASSWORD: process.env.SERVER_ADMIN_PASSWORD || undefined,
+    ADMIN_USERNAME: resolveEnv("SERVER_ADMIN_USERNAME") || undefined,
+    ADMIN_PASSWORD: resolveEnv("SERVER_ADMIN_PASSWORD") || undefined,
     MAX_DOWNLOAD_BANDWIDTH_IN_KBPS: parseKibibytesToBytes(
-      process.env.SERVER_MAX_DOWNLOAD_BANDWIDTH_IN_KBPS,
+      resolveEnv("SERVER_MAX_DOWNLOAD_BANDWIDTH_IN_KBPS"),
     ),
     ONLINE_ACTIVITIES_DISABLED: parseBooleanEnvVariable(
-      process.env.SERVER_ONLINE_ACTIVITIES_DISABLED,
+      resolveEnv("SERVER_ONLINE_ACTIVITIES_DISABLED"),
     ),
-    STACK_TRACE_LIMIT: parseNumber(process.env.SERVER_STACK_TRACE_LIMIT, 10),
+    STACK_TRACE_LIMIT: parseNumber(resolveEnv("SERVER_STACK_TRACE_LIMIT"), 10),
     HTTPS: {
-      ENABLED: parseBooleanEnvVariable(process.env.SERVER_HTTPS_ENABLED),
-      PORT: parseNumber(process.env.SERVER_HTTPS_PORT, 8443),
-      KEY_PATH: process.env.SERVER_HTTPS_KEY_PATH || undefined,
-      CERT_PATH: process.env.SERVER_HTTPS_CERT_PATH || undefined,
-      CA_CERT_PATH: process.env.SERVER_HTTPS_CA_CERT_PATH || undefined,
+      ENABLED: parseBooleanEnvVariable(resolveEnv("SERVER_HTTPS_ENABLED")),
+      PORT: parseNumber(resolveEnv("SERVER_HTTPS_PORT"), 8443),
+      KEY_PATH: resolveEnv("SERVER_HTTPS_KEY_PATH") || undefined,
+      CERT_PATH: resolveEnv("SERVER_HTTPS_CERT_PATH") || undefined,
+      CA_CERT_PATH: resolveEnv("SERVER_HTTPS_CA_CERT_PATH") || undefined,
     } as const,
   } as const,
   WEB_UI: {
     ENABLED: parseBooleanEnvVariable(
-      process.env.WEB_UI_ENABLED ||
-        process.env.SERVER_WEB_UI_ENABLED ||
-        process.env.SERVER_LANDING_PAGE_ENABLED,
+      resolveEnv("WEB_UI_ENABLED") ||
+        resolveEnv("SERVER_WEB_UI_ENABLED") ||
+        resolveEnv("SERVER_LANDING_PAGE_ENABLED"),
       true,
     ),
-    VERSION: process.env.WEB_UI_VERSION || undefined,
+    VERSION: resolveEnv("WEB_UI_VERSION") || undefined,
   } as const,
   VOLUMES: {
-    CONFIG: parsePath(process.env.VOLUMES_CONFIG, "/config"),
-    FILES: parsePath(process.env.VOLUMES_FILES, "/files"),
-    MEDIA: parsePath(process.env.VOLUMES_MEDIA, "/media"),
-    LOGS: parsePath(process.env.VOLUMES_LOGS, "/logs"),
-    SQLITEDB: parsePath(process.env.VOLUMES_SQLITEDB, "/db"),
-    PLUGINS: parsePath(process.env.VOLUMES_PLUGINS, "/plugins"),
-    SAVEFILES: parsePath(process.env.VOLUMES_SAVEFILES, "/savefiles"),
+    CONFIG: parsePath(resolveEnv("VOLUMES_CONFIG"), "/config"),
+    FILES: parsePath(resolveEnv("VOLUMES_FILES"), "/files"),
+    MEDIA: parsePath(resolveEnv("VOLUMES_MEDIA"), "/media"),
+    LOGS: parsePath(resolveEnv("VOLUMES_LOGS"), "/logs"),
+    SQLITEDB: parsePath(resolveEnv("VOLUMES_SQLITEDB"), "/db"),
+    PLUGINS: parsePath(resolveEnv("VOLUMES_PLUGINS"), "/plugins"),
+    SAVEFILES: parsePath(resolveEnv("VOLUMES_SAVEFILES"), "/savefiles"),
   } as const,
   DB: {
-    SYSTEM: process.env.DB_SYSTEM || "POSTGRESQL",
-    HOST: process.env.DB_HOST || "localhost",
-    PORT: parseNumber(process.env.DB_PORT, 5432),
-    USERNAME: process.env.DB_USERNAME || "default",
-    PASSWORD: process.env.DB_PASSWORD || "default",
-    DATABASE: process.env.DB_DATABASE || "gamevault",
-    DEBUG: parseBooleanEnvVariable(process.env.DB_DEBUG),
-    SYNCHRONIZE: parseBooleanEnvVariable(process.env.DB_SYNCHRONIZE),
+    SYSTEM: resolveEnv("DB_SYSTEM") || "POSTGRESQL",
+    HOST: resolveEnv("DB_HOST") || "localhost",
+    PORT: parseNumber(resolveEnv("DB_PORT"), 5432),
+    USERNAME: resolveEnv("DB_USERNAME") || "default",
+    PASSWORD: resolveEnv("DB_PASSWORD") || "default",
+    DATABASE: resolveEnv("DB_DATABASE") || "gamevault",
+    DEBUG: parseBooleanEnvVariable(resolveEnv("DB_DEBUG")),
+    SYNCHRONIZE: parseBooleanEnvVariable(resolveEnv("DB_SYNCHRONIZE")),
     TLS: {
-      ENABLED: parseBooleanEnvVariable(process.env.DB_TLS_ENABLED),
+      ENABLED: parseBooleanEnvVariable(resolveEnv("DB_TLS_ENABLED")),
       REJECT_UNAUTHORIZED_ENABLED: parseBooleanEnvVariable(
-        process.env.DB_TLS_REJECT_UNAUTHORIZED_ENABLED,
+        resolveEnv("DB_TLS_REJECT_UNAUTHORIZED_ENABLED"),
       ),
-      KEY_PATH: parsePath(process.env.DB_TLS_KEY_PATH, ""),
-      CERTIFICATE_PATH: parsePath(process.env.DB_TLS_CERTIFICATE_PATH, ""),
+      KEY_PATH: parsePath(resolveEnv("DB_TLS_KEY_PATH"), ""),
+      CERTIFICATE_PATH: parsePath(resolveEnv("DB_TLS_CERTIFICATE_PATH"), ""),
       CA_CERTIFICATE_PATH: parsePath(
-        process.env.DB_TLS_CA_CERTIFICATE_PATH,
+        resolveEnv("DB_TLS_CA_CERTIFICATE_PATH"),
         "",
       ),
     },
   } as const,
   USERS: {
-    REQUIRE_EMAIL: parseBooleanEnvVariable(process.env.USERS_REQUIRE_EMAIL),
+    REQUIRE_EMAIL: parseBooleanEnvVariable(resolveEnv("USERS_REQUIRE_EMAIL")),
     REQUIRE_FIRST_NAME: parseBooleanEnvVariable(
-      process.env.USERS_REQUIRE_FIRST_NAME,
+      resolveEnv("USERS_REQUIRE_FIRST_NAME"),
     ),
     REQUIRE_LAST_NAME: parseBooleanEnvVariable(
-      process.env.USERS_REQUIRE_LAST_NAME,
+      resolveEnv("USERS_REQUIRE_LAST_NAME"),
     ),
     REQUIRE_BIRTH_DATE: parseBooleanEnvVariable(
-      process.env.USERS_REQUIRE_BIRTH_DATE,
+      resolveEnv("USERS_REQUIRE_BIRTH_DATE"),
     ),
   } as const,
   PARENTAL: {
     AGE_RESTRICTION_ENABLED: parseBooleanEnvVariable(
-      process.env.PARENTAL_AGE_RESTRICTION_ENABLED,
+      resolveEnv("PARENTAL_AGE_RESTRICTION_ENABLED"),
     ),
-    AGE_OF_MAJORITY: parseNumber(process.env.PARENTAL_AGE_OF_MAJORITY, 18),
+    AGE_OF_MAJORITY: parseNumber(resolveEnv("PARENTAL_AGE_OF_MAJORITY"), 18),
   } as const,
   GAMES: {
     INDEX_USE_POLLING: parseBooleanEnvVariable(
-      process.env.GAMES_INDEX_USE_POLLING,
+      resolveEnv("GAMES_INDEX_USE_POLLING"),
     ),
     INDEX_INTERVAL_IN_MINUTES: parseNumber(
-      process.env.GAMES_INDEX_INTERVAL_IN_MINUTES,
+      resolveEnv("GAMES_INDEX_INTERVAL_IN_MINUTES"),
       60,
     ),
     SUPPORTED_FILE_FORMATS: parseList(
-      process.env.GAMES_SUPPORTED_FILE_FORMATS,
+      resolveEnv("GAMES_SUPPORTED_FILE_FORMATS"),
       globals.SUPPORTED_FILE_FORMATS,
     ),
     SEARCH_RECURSIVE: parseBooleanEnvVariable(
-      process.env.GAMES_SEARCH_RECURSIVE,
+      resolveEnv("GAMES_SEARCH_RECURSIVE"),
       true,
     ),
-    INDEX_CONCURRENCY: parseNumber(process.env.GAMES_INDEX_CONCURRENCY, 1),
+    INDEX_CONCURRENCY: parseNumber(resolveEnv("GAMES_INDEX_CONCURRENCY"), 1),
     DEFAULT_ARCHIVE_PASSWORD:
-      process.env.GAMES_DEFAULT_ARCHIVE_PASSWORD || "Anything",
+      resolveEnv("GAMES_DEFAULT_ARCHIVE_PASSWORD") || "Anything",
     WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS:
-      process.env.GAMES_WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS ||
+      resolveEnv("GAMES_WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS") ||
       '/D="%INSTALLDIR%" /S /DIR="%INSTALLDIR%" /SILENT /COMPONENTS=text',
     MAX_UPLOAD_SIZE:
-      bytes(toLower(process.env.GAMES_MAX_UPLOAD_SIZE)) ?? bytes("100gb"),
+      bytes(toLower(resolveEnv("GAMES_MAX_UPLOAD_SIZE"))) ?? bytes("100gb"),
   } as const,
   MEDIA: {
-    MAX_SIZE: bytes(toLower(process.env.MEDIA_MAX_SIZE)) ?? bytes("10mb"),
+    MAX_SIZE: bytes(toLower(resolveEnv("MEDIA_MAX_SIZE"))) ?? bytes("10mb"),
     SUPPORTED_FORMATS: parseList(
-      process.env.MEDIA_SUPPORTED_FORMATS,
+      resolveEnv("MEDIA_SUPPORTED_FORMATS"),
       globals.SUPPORTED_MEDIA_FORMATS,
     ),
-    GC_DISABLED: parseBooleanEnvVariable(process.env.MEDIA_GC_DISABLED, false),
+    GC_DISABLED: parseBooleanEnvVariable(
+      resolveEnv("MEDIA_GC_DISABLED"),
+      false,
+    ),
     GC_INTERVAL_IN_MINUTES: parseNumber(
-      process.env.MEDIA_GC_INTERVAL_IN_MINUTES,
+      resolveEnv("MEDIA_GC_INTERVAL_IN_MINUTES"),
       60,
     ),
   } as const,
   SAVEFILES: {
-    ENABLED: parseBooleanEnvVariable(process.env.SAVEFILES_ENABLED, false),
-    MAX_SIZE: bytes(toLower(process.env.SAVEFILES_MAX_SIZE)) ?? bytes("1gb"),
-    MAX_SAVES: parseNumber(process.env.SAVEFILES_MAX_SAVES, 10),
+    ENABLED: parseBooleanEnvVariable(resolveEnv("SAVEFILES_ENABLED"), false),
+    MAX_SIZE: bytes(toLower(resolveEnv("SAVEFILES_MAX_SIZE"))) ?? bytes("1gb"),
+    MAX_SAVES: parseNumber(resolveEnv("SAVEFILES_MAX_SAVES"), 10),
   } as const,
   METADATA: {
-    TTL_IN_DAYS: parseNumber(process.env.METADATA_TTL_IN_DAYS, 30),
+    TTL_IN_DAYS: parseNumber(resolveEnv("METADATA_TTL_IN_DAYS"), 30),
     IGDB: {
-      ENABLED: parseBooleanEnvVariable(process.env.METADATA_IGDB_ENABLED, true),
-      PRIORITY: parseNumber(process.env.METADATA_IGDB_PRIORITY, 10),
+      ENABLED: parseBooleanEnvVariable(
+        resolveEnv("METADATA_IGDB_ENABLED"),
+        true,
+      ),
+      PRIORITY: parseNumber(resolveEnv("METADATA_IGDB_PRIORITY"), 10),
       REQUEST_INTERVAL_MS: parseNumber(
-        process.env.METADATA_IGDB_REQUEST_INTERVAL_MS,
+        resolveEnv("METADATA_IGDB_REQUEST_INTERVAL_MS"),
         250,
       ),
-      CLIENT_ID: process.env.METADATA_IGDB_CLIENT_ID || undefined,
-      CLIENT_SECRET: process.env.METADATA_IGDB_CLIENT_SECRET || undefined,
+      CLIENT_ID: resolveEnv("METADATA_IGDB_CLIENT_ID") || undefined,
+      CLIENT_SECRET: resolveEnv("METADATA_IGDB_CLIENT_SECRET") || undefined,
     } as const,
   } as const,
   TESTING: {
     AUTHENTICATION_DISABLED: parseBooleanEnvVariable(
-      process.env.TESTING_AUTHENTICATION_DISABLED,
+      resolveEnv("TESTING_AUTHENTICATION_DISABLED"),
     ),
-    MOCK_FILES: parseBooleanEnvVariable(process.env.TESTING_MOCK_FILES),
-    IN_MEMORY_DB: parseBooleanEnvVariable(process.env.TESTING_IN_MEMORY_DB),
-    MOCK_PROVIDERS: parseBooleanEnvVariable(process.env.TESTING_MOCK_PROVIDERS),
+    MOCK_FILES: parseBooleanEnvVariable(resolveEnv("TESTING_MOCK_FILES")),
+    IN_MEMORY_DB: parseBooleanEnvVariable(resolveEnv("TESTING_IN_MEMORY_DB")),
+    MOCK_PROVIDERS: parseBooleanEnvVariable(
+      resolveEnv("TESTING_MOCK_PROVIDERS"),
+    ),
     LOG_HTTP_TRAFFIC_ENABLED: parseBooleanEnvVariable(
-      process.env.TESTING_LOG_HTTP_TRAFFIC_ENABLED,
+      resolveEnv("TESTING_LOG_HTTP_TRAFFIC_ENABLED"),
     ),
   } as const,
   AUTH: {
     SEED:
-      safeHash(process.env.AUTH_SEED) ||
-      safeHash(process.env.DB_PASSWORD) ||
-      safeHash(process.env.SERVER_ADMIN_PASSWORD) ||
-      safeHash(process.env.AUTH_OAUTH2_CLIENT_SECRET) ||
-      safeHash(process.env.METADATA_IGDB_CLIENT_SECRET) ||
+      safeHash(resolveEnv("AUTH_SEED")) ||
+      safeHash(resolveEnv("DB_PASSWORD")) ||
+      safeHash(resolveEnv("SERVER_ADMIN_PASSWORD")) ||
+      safeHash(resolveEnv("AUTH_OAUTH2_CLIENT_SECRET")) ||
+      safeHash(resolveEnv("METADATA_IGDB_CLIENT_SECRET")) ||
       randomBytes(32).toString("hex"),
     ACCESS_TOKEN: {
       get SECRET() {
@@ -258,7 +288,7 @@ const configuration = {
           .update(configuration.AUTH.SEED)
           .digest("hex");
       },
-      EXPIRES_IN: process.env.AUTH_ACCESS_TOKEN_EXPIRES_IN || "5m",
+      EXPIRES_IN: resolveEnv("AUTH_ACCESS_TOKEN_EXPIRES_IN") || "5m",
     } as const,
     REFRESH_TOKEN: {
       get SECRET() {
@@ -266,28 +296,28 @@ const configuration = {
           .update(configuration.AUTH.ACCESS_TOKEN.SECRET)
           .digest("hex");
       },
-      EXPIRES_IN: process.env.AUTH_REFRESH_TOKEN_EXPIRES_IN || "30d",
+      EXPIRES_IN: resolveEnv("AUTH_REFRESH_TOKEN_EXPIRES_IN") || "30d",
     } as const,
     API_KEY: {
-      ENABLED: parseBooleanEnvVariable(process.env.AUTH_API_KEY_ENABLED),
+      ENABLED: parseBooleanEnvVariable(resolveEnv("AUTH_API_KEY_ENABLED")),
     } as const,
     OAUTH2: {
-      ENABLED: parseBooleanEnvVariable(process.env.AUTH_OAUTH2_ENABLED),
-      SCOPES: parseList(process.env.AUTH_OAUTH2_SCOPES, [
+      ENABLED: parseBooleanEnvVariable(resolveEnv("AUTH_OAUTH2_ENABLED")),
+      SCOPES: parseList(resolveEnv("AUTH_OAUTH2_SCOPES"), [
         "openid",
         "email",
         "profile",
       ]),
-      AUTH_URL: process.env.AUTH_OAUTH2_AUTH_URL || undefined,
-      TOKEN_URL: process.env.AUTH_OAUTH2_TOKEN_URL || undefined,
-      CALLBACK_URL: process.env.AUTH_OAUTH2_CALLBACK_URL || undefined,
-      USERINFO_URL: process.env.AUTH_OAUTH2_USERINFO_URL || undefined,
-      CLIENT_ID: process.env.AUTH_OAUTH2_CLIENT_ID || undefined,
-      CLIENT_SECRET: process.env.AUTH_OAUTH2_CLIENT_SECRET || undefined,
+      AUTH_URL: resolveEnv("AUTH_OAUTH2_AUTH_URL") || undefined,
+      TOKEN_URL: resolveEnv("AUTH_OAUTH2_TOKEN_URL") || undefined,
+      CALLBACK_URL: resolveEnv("AUTH_OAUTH2_CALLBACK_URL") || undefined,
+      USERINFO_URL: resolveEnv("AUTH_OAUTH2_USERINFO_URL") || undefined,
+      CLIENT_ID: resolveEnv("AUTH_OAUTH2_CLIENT_ID") || undefined,
+      CLIENT_SECRET: resolveEnv("AUTH_OAUTH2_CLIENT_SECRET") || undefined,
     } as const,
     BASIC_AUTH: {
       ENABLED: parseBooleanEnvVariable(
-        process.env.AUTH_BASIC_AUTH_ENABLED,
+        resolveEnv("AUTH_BASIC_AUTH_ENABLED"),
         true,
       ),
     } as const,
