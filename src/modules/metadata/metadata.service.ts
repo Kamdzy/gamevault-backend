@@ -12,7 +12,7 @@ import { validateOrReject } from "class-validator";
 import { kebabCase } from "lodash";
 import { setTimeout } from "timers/promises";
 import { AppConfiguration } from "../../configuration";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { logGamevaultGame, logMetadataProvider } from "../../logging";
 import { GamesService } from "../games/games.service";
 import { GamevaultGame } from "../games/gamevault-game.entity";
@@ -34,7 +34,7 @@ export class MetadataService {
     @Inject(forwardRef(() => GamesService))
     private readonly gamesService: GamesService,
     private readonly gameMetadataService: GameMetadataService,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   /**

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -19,7 +18,7 @@ import {
 } from "fs-extra";
 import path, { basename, dirname } from "path";
 import { AppConfiguration } from "../../configuration";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { UsersService } from "../users/users.service";
 
 @Injectable()
@@ -28,7 +27,7 @@ export class SavefileService {
 
   constructor(
     private readonly usersService: UsersService,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   /**

@@ -1,7 +1,6 @@
 import {
   CanActivate,
   ExecutionContext,
-  Inject,
   Injectable,
   Logger,
   NotAcceptableException,
@@ -11,8 +10,8 @@ import { Reflector } from "@nestjs/core";
 import { Request } from "express";
 import { Socket } from "socket.io";
 import { AppConfiguration } from "../../../configuration";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { SKIP_GUARDS_KEY } from "../../../decorators/skip-guards.decorator";
-import { GAMEVAULT_CONFIG } from "../../../gamevault-config";
 import { ApiKeyService } from "../../users/api-key.service";
 import { Role } from "../../users/models/role.enum";
 
@@ -23,7 +22,7 @@ export class ApiKeyGuard implements CanActivate {
   constructor(
     private readonly apiKeyService: ApiKeyService,
     private readonly reflector: Reflector,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

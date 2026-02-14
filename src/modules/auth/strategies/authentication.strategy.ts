@@ -1,8 +1,8 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { AppConfiguration } from "../../../configuration";
-import { GAMEVAULT_CONFIG } from "../../../gamevault-config";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { UsersService } from "../../users/users.service";
 import { GamevaultJwtPayload } from "../models/gamevault-jwt-payload.interface";
 @Injectable()
@@ -11,7 +11,7 @@ export class AuthenticationStrategy extends PassportStrategy(Strategy, "auth") {
 
   constructor(
     private readonly usersService: UsersService,
-    @Inject(GAMEVAULT_CONFIG) config: AppConfiguration,
+    @InjectGamevaultConfig() config: AppConfiguration,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),

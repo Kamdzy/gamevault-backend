@@ -1,7 +1,6 @@
 import {
   CallHandler,
   ExecutionContext,
-  Inject,
   Injectable,
   Logger,
   NestInterceptor,
@@ -11,13 +10,13 @@ import { Observable } from "rxjs";
 import { tap } from "rxjs/operators";
 
 import { AppConfiguration } from "../configuration";
-import { GAMEVAULT_CONFIG } from "../gamevault-config";
+import { InjectGamevaultConfig } from "../decorators/inject-gamevault-config.decorator";
 
 @Injectable()
 export class HttpLoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(this.constructor.name);
   constructor(
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

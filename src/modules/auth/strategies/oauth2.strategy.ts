@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -11,7 +10,7 @@ import { randomBytes } from "crypto";
 import { VerifiedCallback } from "passport-jwt";
 import { Strategy } from "passport-oauth2";
 import { AppConfiguration } from "../../../configuration";
-import { GAMEVAULT_CONFIG } from "../../../gamevault-config";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { GamevaultUser } from "../../users/gamevault-user.entity";
 import { UsersService } from "../../users/users.service";
 import { OidcUserInfo } from "../models/oidc-user-info.interface";
@@ -25,7 +24,7 @@ export class OAuth2Strategy extends PassportStrategy(Strategy, "oauth2", 6) {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
-    @Inject(GAMEVAULT_CONFIG) config: AppConfiguration,
+    @InjectGamevaultConfig() config: AppConfiguration,
   ) {
     const { AUTH } = config;
     if (
