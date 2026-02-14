@@ -1,4 +1,5 @@
 import { Reflector } from "@nestjs/core";
+import configuration from "../../../configuration";
 
 import { AuthenticationGuard } from "./authentication.guard";
 
@@ -54,7 +55,7 @@ describe("AuthenticationGuard", () => {
       getAllAndOverride: jest.fn(),
     } as any;
 
-    guard = new AuthenticationGuard(reflector);
+    guard = new AuthenticationGuard(reflector, configuration as any);
   });
 
   it("should skip when guard name is in skip-guards metadata", () => {
@@ -95,7 +96,7 @@ describe("AuthenticationGuard (auth disabled)", () => {
       getAllAndOverride: jest.fn().mockReturnValue(null),
     } as any;
 
-    guard = new AuthenticationGuard(reflector);
+    guard = new AuthenticationGuard(reflector, config as any);
   });
 
   afterEach(() => {

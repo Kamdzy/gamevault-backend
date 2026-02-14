@@ -1,4 +1,5 @@
 import { NotAcceptableException, UnauthorizedException } from "@nestjs/common";
+import configuration from "../../configuration";
 
 import { DatabaseService } from "./database.service";
 
@@ -46,7 +47,7 @@ describe("DatabaseService", () => {
       runMigrations: jest.fn().mockResolvedValue([]),
     };
 
-    service = new DatabaseService(mockDataSource);
+    service = new DatabaseService(mockDataSource, configuration as any);
   });
 
   afterEach(() => jest.restoreAllMocks());

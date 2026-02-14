@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import configuration from "../../configuration";
 
 import { SavefileService } from "./savefile.service";
 
@@ -44,7 +45,7 @@ describe("SavefileService", () => {
         .mockResolvedValue(undefined),
     };
 
-    service = new SavefileService(mockUsersService);
+    service = new SavefileService(mockUsersService, configuration as any);
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     fileTypeChecker = require("file-type-checker");
   });

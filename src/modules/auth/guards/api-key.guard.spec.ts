@@ -1,5 +1,6 @@
 import { UnauthorizedException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import configuration from "../../../configuration";
 
 import { Role } from "../../users/models/role.enum";
 import { ApiKeyGuard } from "./api-key.guard";
@@ -41,7 +42,7 @@ describe("ApiKeyGuard", () => {
       findUserByApiKeyOrFail: jest.fn(),
     };
 
-    guard = new ApiKeyGuard(mockApiKeyService, reflector);
+    guard = new ApiKeyGuard(mockApiKeyService, reflector, configuration as any);
   });
 
   function httpContext(apiKey?: string) {

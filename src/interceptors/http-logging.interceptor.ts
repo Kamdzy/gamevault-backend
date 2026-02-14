@@ -1,6 +1,7 @@
 import {
   CallHandler,
   ExecutionContext,
+  Inject,
   Injectable,
   Logger,
   NestInterceptor,
@@ -9,14 +10,19 @@ import { Request, Response } from "express";
 import { Observable } from "rxjs";
 import { tap } from "rxjs/operators";
 
-import configuration from "../configuration";
+import { AppConfiguration } from "../configuration";
+import { GAMEVAULT_CONFIG } from "../gamevault-config";
 
 @Injectable()
 export class HttpLoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(this.constructor.name);
+  constructor(
+    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+  ) {}
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    if (!configuration.TESTING.LOG_HTTP_TRAFFIC_ENABLED) {
+    if (!this.config.TESTING.LOG_HTTP_TRAFFIC_ENABLED) {
       return next.handle();
     }
 

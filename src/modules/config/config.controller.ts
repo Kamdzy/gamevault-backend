@@ -1,4 +1,11 @@
-import { Body, Controller, Get, Put, StreamableFile } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Put,
+  StreamableFile,
+} from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiBody,
@@ -9,8 +16,9 @@ import {
 } from "@nestjs/swagger";
 
 import { createReadStream, outputFile, pathExists } from "fs-extra";
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
 import { MinimumRole } from "../../decorators/minimum-role.decorator";
+import { GAMEVAULT_CONFIG } from "../../gamevault-config";
 import { Status } from "../status/models/status.model";
 import { Role } from "../users/models/role.enum";
 import { UpdateNewsDto } from "./models/update-news.dto";
@@ -20,6 +28,10 @@ import { UpdateNewsDto } from "./models/update-news.dto";
 @ApiTags("config")
 @ApiSecurity("apikey")
 export class ConfigController {
+  constructor(
+    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+  ) {}
+
   @Get("news")
   @ApiOkResponse({ type: () => Status })
   @ApiOperation({
@@ -28,9 +40,9 @@ export class ConfigController {
   })
   @MinimumRole(Role.GUEST)
   async getNews(): Promise<StreamableFile> {
-    if (await pathExists(`${configuration.VOLUMES.CONFIG}/news.md`)) {
+    if (await pathExists(`${this.config.VOLUMES.CONFIG}/news.md`)) {
       return new StreamableFile(
-        createReadStream(`${configuration.VOLUMES.CONFIG}/news.md`),
+        createReadStream(`${this.config.VOLUMES.CONFIG}/news.md`),
       );
     }
   }
@@ -44,6 +56,6 @@ export class ConfigController {
   })
   @MinimumRole(Role.ADMIN)
   async putNews(@Body() dto: UpdateNewsDto): Promise<void> {
-    await outputFile(`${configuration.VOLUMES.CONFIG}/news.md`, dto.content);
+    await outputFile(`${this.config.VOLUMES.CONFIG}/news.md`, dto.content);
   }
 }

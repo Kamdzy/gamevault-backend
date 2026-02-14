@@ -1,11 +1,12 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import * as fs from "fs-extra";
 import { extractFull } from "node-7z";
 import * as streamWeb from "node:stream/web";
 import { join } from "path";
 import * as semver from "semver";
 import { Readable } from "stream";
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
+import { GAMEVAULT_CONFIG } from "../../gamevault-config";
 
 interface GitHubRelease {
   tag_name: string;
@@ -17,17 +18,24 @@ interface GitHubRelease {
 @Injectable()
 export class WebUIService {
   private readonly logger = new Logger(this.constructor.name);
-  private readonly cachePath = join(configuration.VOLUMES.CONFIG, "frontend");
   private readonly githubApiUrl =
     "https://api.github.com/repos/Phalcode/gamevault-frontend/releases";
   private compatibleVersion = "";
+
+  constructor(
+    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+  ) {}
+
+  private get cachePath(): string {
+    return join(this.config.VOLUMES.CONFIG, "frontend");
+  }
 
   /**
    * Prepares the frontend for serving based on unstable mode and cache status.
    */
   async prepareFrontend(): Promise<void> {
-    const serverVersion = configuration.SERVER.VERSION;
-    const forcedVersion = configuration.WEB_UI.VERSION;
+    const serverVersion = this.config.SERVER.VERSION;
+    const forcedVersion = this.config.WEB_UI.VERSION;
 
     this.logger.log({
       message: "Preparing frontend",

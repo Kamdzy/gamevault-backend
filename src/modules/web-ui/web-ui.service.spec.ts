@@ -31,7 +31,7 @@ describe("WebUIService", () => {
   let service: WebUIService;
 
   beforeEach(() => {
-    service = new WebUIService();
+    service = new WebUIService(jest.requireMock("../../configuration").default);
     jest.restoreAllMocks();
   });
 

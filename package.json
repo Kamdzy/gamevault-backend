@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@nestjs/common": "^11.1.13",
+    "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.1.13",
     "@nestjs/event-emitter": "^3.0.1",
     "@nestjs/jwt": "^11.0.2",
@@ -80,7 +81,8 @@
     "unidecode": "^1.1.0",
     "winston": "^3.19.0",
     "winston-console-format": "^1.0.8",
-    "winston-daily-rotate-file": "^5.0.0"
+    "winston-daily-rotate-file": "^5.0.0",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.2",

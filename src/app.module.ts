@@ -1,13 +1,18 @@
 import { Module } from "@nestjs/common";
+import {
+  ConfigService,
+  ConfigModule as NestConfigModule,
+} from "@nestjs/config";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { ScheduleModule } from "@nestjs/schedule";
-import configuration from "./configuration";
+import configuration, { gamevaultConfiguration } from "./configuration";
+import { GAMEVAULT_CONFIG, getGamevaultConfig } from "./gamevault-config";
 import { DisableApiIfInterceptor } from "./interceptors/disable-api-if.interceptor";
 import { HttpLoggingInterceptor } from "./interceptors/http-logging.interceptor";
 import { AdminModule } from "./modules/admin/admin.module";
 import { AuthModule } from "./modules/auth/auth.module";
-import { ConfigModule } from "./modules/config/config.module";
+import { ConfigModule as ApiConfigModule } from "./modules/config/config.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { GamesModule } from "./modules/games/games.module";
 import { GarbageCollectionModule } from "./modules/garbage-collection/garbage-collection.module";
@@ -22,8 +27,12 @@ import { WebUIModule } from "./modules/web-ui/web-ui.module";
 
 @Module({
   imports: [
+    NestConfigModule.forRoot({
+      isGlobal: true,
+      load: [gamevaultConfiguration],
+    }),
     OtpModule,
-    ConfigModule,
+    ApiConfigModule,
     AuthModule,
     DatabaseModule,
     MediaModule,
@@ -40,6 +49,11 @@ import { WebUIModule } from "./modules/web-ui/web-ui.module";
     ...(configuration.WEB_UI.ENABLED ? [WebUIModule] : []),
   ],
   providers: [
+    {
+      provide: GAMEVAULT_CONFIG,
+      inject: [ConfigService],
+      useFactory: getGamevaultConfig,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: DisableApiIfInterceptor,

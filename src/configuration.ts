@@ -1,9 +1,113 @@
+import { registerAs } from "@nestjs/config";
 import bytes from "bytes";
 import { createHash, randomBytes } from "crypto";
+import * as dotenv from "dotenv";
+import { existsSync } from "fs";
 import { readFileSync } from "fs-extra";
 import { toLower } from "lodash";
+import { join } from "path";
+import { parse as parseYaml } from "yaml";
 import packageJson from "../package.json";
 import globals from "./globals";
+
+dotenv.config();
+
+let yamlConfigurationCache: Record<string, unknown> | null | undefined;
+
+function getConfigVolumePath(): string {
+  return process.env.VOLUMES_CONFIG?.replace(/\/$/, "") || "/config";
+}
+
+function getYamlConfiguration(): Record<string, unknown> | null {
+  if (yamlConfigurationCache !== undefined) {
+    return yamlConfigurationCache;
+  }
+
+  const configVolumePath = getConfigVolumePath();
+  const candidates = ["config.yaml", "config.yml"];
+
+  for (const candidate of candidates) {
+    const yamlPath = join(configVolumePath, candidate);
+    if (!existsSync(yamlPath)) {
+      continue;
+    }
+
+    try {
+      const parsed = parseYaml(readFileSync(yamlPath, "utf-8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        yamlConfigurationCache = parsed as Record<string, unknown>;
+        return yamlConfigurationCache;
+      }
+
+      throw new Error("Configuration root must be a YAML mapping/object.");
+    } catch (error) {
+      throw new Error(
+        `Failed to parse YAML configuration at \"${yamlPath}\": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  yamlConfigurationCache = null;
+  return yamlConfigurationCache;
+}
+
+function getYamlValueByPath(
+  source: Record<string, unknown>,
+  pathSegments: string[],
+): unknown {
+  let current: unknown = source;
+
+  for (const segment of pathSegments) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+
+    const record = current as Record<string, unknown>;
+    const matchedKey = Object.keys(record).find(
+      (key) => key.toLowerCase() === segment.toLowerCase(),
+    );
+
+    if (!matchedKey) {
+      return undefined;
+    }
+
+    current = record[matchedKey];
+  }
+
+  return current;
+}
+
+function toEnvironmentString(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.map(String).join(",");
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function resolveYamlEnvFallback(name: string): string | undefined {
+  const yamlConfiguration = getYamlConfiguration();
+  if (!yamlConfiguration) {
+    return undefined;
+  }
+
+  const directValue = getYamlValueByPath(yamlConfiguration, [name]);
+  if (directValue !== undefined) {
+    return toEnvironmentString(directValue);
+  }
+
+  const nestedValue = getYamlValueByPath(yamlConfiguration, name.split("_"));
+  return toEnvironmentString(nestedValue);
+}
 
 /**
  * Resolves an environment variable with Docker Secrets support.
@@ -23,7 +127,12 @@ function resolveEnv(name: string): string | undefined {
       );
     }
   }
-  return process.env[name];
+
+  if (process.env[name] !== undefined) {
+    return process.env[name];
+  }
+
+  return resolveYamlEnvFallback(name);
 }
 
 function parseBooleanEnvVariable(
@@ -323,6 +432,15 @@ const configuration = {
     } as const,
   } as const,
 } as const;
+
+export const CONFIG_NAMESPACE = "gamevault";
+
+export const gamevaultConfiguration = registerAs(
+  CONFIG_NAMESPACE,
+  () => configuration,
+);
+
+export type AppConfiguration = typeof configuration;
 
 export function getCensoredConfiguration() {
   const censoredConfig = JSON.parse(
