@@ -14,7 +14,7 @@ import { pathExists, remove, writeFile } from "fs-extra";
 import { Repository } from "typeorm";
 
 import { AppConfiguration } from "../../configuration";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { logMedia } from "../../logging";
 import { UsersService } from "../users/users.service";
 import { Media } from "./media.entity";
@@ -28,7 +28,7 @@ export class MediaService {
     private readonly mediaRepository: Repository<Media>,
     @Inject(forwardRef(() => UsersService))
     private readonly usersService: UsersService,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   public async isAvailable(id: number): Promise<boolean> {

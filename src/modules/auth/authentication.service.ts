@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   Logger,
   OnModuleInit,
@@ -11,7 +10,7 @@ import { createHash } from "crypto";
 import ms, { StringValue } from "ms";
 import { LessThan, MoreThan, Repository } from "typeorm";
 import { AppConfiguration } from "../../configuration";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { GamevaultUser } from "../users/gamevault-user.entity";
 import { RegisterUserDto } from "../users/models/register-user.dto";
 import { UsersService } from "../users/users.service";
@@ -28,7 +27,7 @@ export class AuthenticationService implements OnModuleInit {
     private readonly jwtService: JwtService,
     @InjectRepository(Session)
     private readonly sessionRepository: Repository<Session>,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   async onModuleInit() {

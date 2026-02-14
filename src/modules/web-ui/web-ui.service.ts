@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import * as fs from "fs-extra";
 import { extractFull } from "node-7z";
 import * as streamWeb from "node:stream/web";
@@ -6,7 +6,7 @@ import { join } from "path";
 import * as semver from "semver";
 import { Readable } from "stream";
 import { AppConfiguration } from "../../configuration";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 
 interface GitHubRelease {
   tag_name: string;
@@ -23,7 +23,7 @@ export class WebUIService {
   private compatibleVersion = "";
 
   constructor(
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   private get cachePath(): string {

@@ -24,7 +24,7 @@ import {
 
 import { toLower } from "lodash";
 import { AppConfiguration } from "../../configuration";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { FindOptions } from "../../globals";
 import { GamesService } from "../games/games.service";
 import { MediaService } from "../media/media.service";
@@ -44,7 +44,7 @@ export class UsersService implements OnApplicationBootstrap {
     private readonly mediaService: MediaService,
     @Inject(forwardRef(() => GamesService))
     private readonly gamesService: GamesService,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   async onApplicationBootstrap() {

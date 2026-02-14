@@ -2,16 +2,15 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
-  Inject,
   Injectable,
   Logger,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 
 import { AppConfiguration } from "../../../configuration";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { MINIMUM_ROLE_KEY } from "../../../decorators/minimum-role.decorator";
 import { SKIP_GUARDS_KEY } from "../../../decorators/skip-guards.decorator";
-import { GAMEVAULT_CONFIG } from "../../../gamevault-config";
 import { Role } from "../../users/models/role.enum";
 import { UsersService } from "../../users/users.service";
 
@@ -21,7 +20,7 @@ export class AuthorizationGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly usersService: UsersService,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {
     if (this.config.TESTING.AUTHENTICATION_DISABLED) {
       this.logger.warn({

@@ -1,5 +1,4 @@
 import {
-  Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -22,7 +21,7 @@ import unidecode from "unidecode";
 import { promisify } from "util";
 
 import { AppConfiguration } from "../../configuration";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 
 @Injectable()
 export class DatabaseService {
@@ -31,7 +30,7 @@ export class DatabaseService {
 
   constructor(
     private readonly dataSource: DataSource,
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   async backup(password: string): Promise<StreamableFile> {

@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Inject,
-  Put,
-  StreamableFile,
-} from "@nestjs/common";
+import { Body, Controller, Get, Put, StreamableFile } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiBody,
@@ -17,8 +10,8 @@ import {
 
 import { createReadStream, outputFile, pathExists } from "fs-extra";
 import { AppConfiguration } from "../../configuration";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { MinimumRole } from "../../decorators/minimum-role.decorator";
-import { GAMEVAULT_CONFIG } from "../../gamevault-config";
 import { Status } from "../status/models/status.model";
 import { Role } from "../users/models/role.enum";
 import { UpdateNewsDto } from "./models/update-news.dto";
@@ -29,7 +22,7 @@ import { UpdateNewsDto } from "./models/update-news.dto";
 @ApiSecurity("apikey")
 export class ConfigController {
   constructor(
-    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   @Get("news")
