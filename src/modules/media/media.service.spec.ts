@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Repository } from "typeorm";
+import configuration from "../../configuration";
 import { GamevaultUser } from "../users/gamevault-user.entity";
 import { UsersService } from "../users/users.service";
 import { Media } from "./media.entity";
@@ -78,7 +79,11 @@ describe("MediaService", () => {
       findOneByUsernameOrFail: jest.fn(),
     } as any;
 
-    service = new MediaService(mediaRepository, usersService);
+    service = new MediaService(
+      mediaRepository,
+      usersService,
+      configuration as any,
+    );
   });
 
   describe("isAvailable", () => {

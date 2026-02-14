@@ -1,5 +1,6 @@
 import { ForbiddenException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import configuration from "../../../configuration";
 
 import { Role } from "../../users/models/role.enum";
 import { AuthorizationGuard } from "./authorization.guard";
@@ -53,7 +54,11 @@ describe("AuthorizationGuard", () => {
       find: jest.fn(),
     };
 
-    guard = new AuthorizationGuard(reflector, mockUsersService);
+    guard = new AuthorizationGuard(
+      reflector,
+      mockUsersService,
+      configuration as any,
+    );
   });
 
   it("should allow access when skip-guards includes AuthorizationGuard", async () => {
@@ -134,7 +139,7 @@ describe("AuthorizationGuard (auth disabled)", () => {
         .mockResolvedValue([{ username: "admin", role: Role.ADMIN }]),
     };
 
-    guard = new AuthorizationGuard(reflector, mockUsersService);
+    guard = new AuthorizationGuard(reflector, mockUsersService, config as any);
   });
 
   afterEach(() => {

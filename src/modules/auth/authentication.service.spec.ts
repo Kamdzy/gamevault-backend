@@ -1,6 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Repository } from "typeorm";
+import configuration from "../../configuration";
 import { GamevaultUser } from "../users/gamevault-user.entity";
 import { Role } from "../users/models/role.enum";
 import { UsersService } from "../users/users.service";
@@ -50,6 +51,7 @@ describe("AuthenticationService", () => {
       usersService,
       jwtService,
       sessionRepository,
+      configuration,
     );
   });
 

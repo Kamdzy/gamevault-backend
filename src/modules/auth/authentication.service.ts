@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   OnModuleInit,
@@ -9,7 +10,8 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { createHash } from "crypto";
 import ms, { StringValue } from "ms";
 import { LessThan, MoreThan, Repository } from "typeorm";
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
+import { GAMEVAULT_CONFIG } from "../../gamevault-config";
 import { GamevaultUser } from "../users/gamevault-user.entity";
 import { RegisterUserDto } from "../users/models/register-user.dto";
 import { UsersService } from "../users/users.service";
@@ -26,6 +28,7 @@ export class AuthenticationService implements OnModuleInit {
     private readonly jwtService: JwtService,
     @InjectRepository(Session)
     private readonly sessionRepository: Repository<Session>,
+    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
   ) {}
 
   async onModuleInit() {
@@ -34,7 +37,7 @@ export class AuthenticationService implements OnModuleInit {
 
   private async cleanupOldSessions() {
     const expiryTime = ms(
-      configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
+      this.config.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
     );
     const cutoffDate = new Date(Date.now() - expiryTime * 3);
 
@@ -73,8 +76,8 @@ export class AuthenticationService implements OnModuleInit {
     const refreshToken = this.jwtService.sign(
       { payload },
       {
-        secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
-        expiresIn: configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
+        secret: this.config.AUTH.REFRESH_TOKEN.SECRET,
+        expiresIn: this.config.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
       },
     );
 
@@ -85,8 +88,7 @@ export class AuthenticationService implements OnModuleInit {
       .update(refreshToken)
       .digest("hex");
     session.expires_at = new Date(
-      Date.now() +
-        ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
+      Date.now() + ms(this.config.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
     );
     session.ip_address = ipAddress;
     session.user_agent = userAgent;
@@ -145,8 +147,8 @@ export class AuthenticationService implements OnModuleInit {
     const newRefreshToken = this.jwtService.sign(
       { payload },
       {
-        secret: configuration.AUTH.REFRESH_TOKEN.SECRET,
-        expiresIn: configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
+        secret: this.config.AUTH.REFRESH_TOKEN.SECRET,
+        expiresIn: this.config.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue,
       },
     );
 
@@ -155,8 +157,7 @@ export class AuthenticationService implements OnModuleInit {
       .update(newRefreshToken)
       .digest("hex");
     session.expires_at = new Date(
-      Date.now() +
-        ms(configuration.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
+      Date.now() + ms(this.config.AUTH.REFRESH_TOKEN.EXPIRES_IN as StringValue),
     );
     await this.sessionRepository.save(session);
 

@@ -11,7 +11,8 @@ import { validateOrReject } from "class-validator";
 
 import { kebabCase } from "lodash";
 import { setTimeout } from "timers/promises";
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
+import { GAMEVAULT_CONFIG } from "../../gamevault-config";
 import { logGamevaultGame, logMetadataProvider } from "../../logging";
 import { GamesService } from "../games/games.service";
 import { GamevaultGame } from "../games/gamevault-game.entity";
@@ -33,6 +34,7 @@ export class MetadataService {
     @Inject(forwardRef(() => GamesService))
     private readonly gamesService: GamesService,
     private readonly gameMetadataService: GameMetadataService,
+    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
   ) {}
 
   /**
@@ -193,7 +195,7 @@ export class MetadataService {
             existingProviderMetadata.created_at) >
             new Date(
               Date.now() -
-                configuration.METADATA.TTL_IN_DAYS * 24 * 60 * 60 * 1000,
+                this.config.METADATA.TTL_IN_DAYS * 24 * 60 * 60 * 1000,
             )
         ) {
           this.logger.debug({
@@ -378,7 +380,7 @@ export class MetadataService {
 
     if (game.type === GameType.WINDOWS_SETUP) {
       metadata.installer_parameters =
-        configuration.GAMES.WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS;
+        this.config.GAMES.WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS;
     }
 
     return metadata;

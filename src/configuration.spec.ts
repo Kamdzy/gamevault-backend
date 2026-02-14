@@ -4,6 +4,10 @@
  * their effects on the configuration object and exported utilities.
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
 import { getCensoredConfiguration } from "./configuration";
 
 describe("Configuration", () => {
@@ -134,6 +138,46 @@ describe("Configuration", () => {
     it("should have media configuration", () => {
       expect(config.MEDIA.MAX_SIZE).toBeGreaterThan(0);
       expect(Array.isArray(config.MEDIA.SUPPORTED_FORMATS)).toBe(true);
+    });
+  });
+
+  describe("YAML configuration fallback", () => {
+    let tempConfigDir: string;
+
+    beforeEach(() => {
+      tempConfigDir = mkdtempSync(join(tmpdir(), "gamevault-config-"));
+      process.env.VOLUMES_CONFIG = tempConfigDir;
+      delete process.env.SERVER_PORT;
+      jest.resetModules();
+    });
+
+    afterEach(() => {
+      delete process.env.VOLUMES_CONFIG;
+      delete process.env.SERVER_PORT;
+      rmSync(tempConfigDir, { recursive: true, force: true });
+    });
+
+    it("should use YAML values when corresponding env vars are unset", async () => {
+      writeFileSync(
+        join(tempConfigDir, "config.yaml"),
+        "server:\n  port: 9191\n",
+      );
+
+      const { default: config } = await import("./configuration");
+
+      expect(config.SERVER.PORT).toBe(9191);
+    });
+
+    it("should prioritize env vars over YAML values", async () => {
+      writeFileSync(
+        join(tempConfigDir, "config.yaml"),
+        "server:\n  port: 9191\n",
+      );
+      process.env.SERVER_PORT = "8089";
+
+      const { default: config } = await import("./configuration");
+
+      expect(config.SERVER.PORT).toBe(8089);
     });
   });
 });

@@ -16,7 +16,9 @@ describe("HttpLoggingInterceptor", () => {
   let mockCallHandler: any;
 
   beforeEach(() => {
-    interceptor = new HttpLoggingInterceptor();
+    interceptor = new HttpLoggingInterceptor(
+      jest.requireMock("../configuration").default,
+    );
     mockCallHandler = {
       handle: jest.fn().mockReturnValue(of({ data: "response" })),
     };
@@ -140,7 +142,7 @@ describe("HttpLoggingInterceptor (disabled)", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const config = require("../configuration").default;
     config.TESTING.LOG_HTTP_TRAFFIC_ENABLED = false;
-    interceptor = new HttpLoggingInterceptor();
+    interceptor = new HttpLoggingInterceptor(config);
     mockCallHandler = {
       handle: jest.fn().mockReturnValue(of("result")),
     };

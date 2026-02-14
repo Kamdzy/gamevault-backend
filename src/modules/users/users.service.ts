@@ -23,7 +23,8 @@ import {
 } from "typeorm";
 
 import { toLower } from "lodash";
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
+import { GAMEVAULT_CONFIG } from "../../gamevault-config";
 import { FindOptions } from "../../globals";
 import { GamesService } from "../games/games.service";
 import { MediaService } from "../media/media.service";
@@ -43,6 +44,7 @@ export class UsersService implements OnApplicationBootstrap {
     private readonly mediaService: MediaService,
     @Inject(forwardRef(() => GamesService))
     private readonly gamesService: GamesService,
+    @Inject(GAMEVAULT_CONFIG) private readonly config: AppConfiguration,
   ) {}
 
   async onApplicationBootstrap() {
@@ -51,12 +53,12 @@ export class UsersService implements OnApplicationBootstrap {
 
   private async recoverAdmin() {
     try {
-      if (!configuration.SERVER.ADMIN_USERNAME) {
+      if (!this.config.SERVER.ADMIN_USERNAME) {
         return;
       }
 
       const user = await this.findOneByUsernameOrFail(
-        configuration.SERVER.ADMIN_USERNAME,
+        this.config.SERVER.ADMIN_USERNAME,
       );
 
       await this.update(
@@ -64,7 +66,7 @@ export class UsersService implements OnApplicationBootstrap {
         {
           role: Role.ADMIN,
           activated: true,
-          password: configuration.SERVER.ADMIN_PASSWORD || undefined,
+          password: this.config.SERVER.ADMIN_PASSWORD || undefined,
         },
         true,
       );
@@ -72,7 +74,7 @@ export class UsersService implements OnApplicationBootstrap {
       if (error instanceof NotFoundException) {
         this.logger.warn({
           message: `The admin user wasn't recovered.`,
-          reason: `The admin user "${configuration.SERVER.ADMIN_USERNAME}" could not be found in the database. Make sure to register the user first.`,
+          reason: `The admin user "${this.config.SERVER.ADMIN_USERNAME}" could not be found in the database. Make sure to register the user first.`,
           error,
         });
       } else {
@@ -176,9 +178,9 @@ export class UsersService implements OnApplicationBootstrap {
     await this.throwIfAlreadyExists(dto.username, dto.email);
     const isFirstUser = (await this.userRepository.count()) === 0;
     const isAdministrator =
-      dto.username === configuration.SERVER.ADMIN_USERNAME || isFirstUser;
+      dto.username === this.config.SERVER.ADMIN_USERNAME || isFirstUser;
     const isActivated =
-      configuration.SERVER.ACCOUNT_ACTIVATION_DISABLED || isAdministrator;
+      this.config.SERVER.ACCOUNT_ACTIVATION_DISABLED || isAdministrator;
 
     const user = new GamevaultUser();
     user.username = dto.username;
@@ -373,9 +375,9 @@ export class UsersService implements OnApplicationBootstrap {
   ): Promise<void> {
     if (
       user.birth_date &&
-      configuration.PARENTAL.AGE_RESTRICTION_ENABLED &&
+      this.config.PARENTAL.AGE_RESTRICTION_ENABLED &&
       this.calculateAge(user.birth_date) <
-        configuration.PARENTAL.AGE_OF_MAJORITY &&
+        this.config.PARENTAL.AGE_OF_MAJORITY &&
       user.role !== Role.ADMIN &&
       !isAdmin
     ) {
@@ -412,7 +414,7 @@ export class UsersService implements OnApplicationBootstrap {
     username: string,
   ): Promise<number | undefined> {
     if (
-      !configuration.PARENTAL.AGE_RESTRICTION_ENABLED ||
+      !this.config.PARENTAL.AGE_RESTRICTION_ENABLED ||
       (await this.checkIfUsernameIsAtLeastRole(username, Role.ADMIN))
     ) {
       return undefined;
@@ -429,7 +431,7 @@ export class UsersService implements OnApplicationBootstrap {
     userId: number,
     username: string,
   ): Promise<boolean> {
-    if (configuration.TESTING.AUTHENTICATION_DISABLED) {
+    if (this.config.TESTING.AUTHENTICATION_DISABLED) {
       return true;
     }
     if (!username) {

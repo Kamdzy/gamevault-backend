@@ -1,5 +1,6 @@
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Repository } from "typeorm";
+import configuration from "../../configuration";
 import { GamesService } from "../games/games.service";
 import { MediaService } from "../media/media.service";
 import { GamevaultUser } from "./gamevault-user.entity";
@@ -48,7 +49,20 @@ describe("UsersService", () => {
       findOneByGameIdOrFail: jest.fn(),
     } as any;
 
-    service = new UsersService(userRepository, mediaService, gamesService);
+    const testConfiguration = {
+      ...configuration,
+      TESTING: {
+        ...configuration.TESTING,
+        AUTHENTICATION_DISABLED: false,
+      },
+    };
+
+    service = new UsersService(
+      userRepository,
+      mediaService,
+      gamesService,
+      testConfiguration as any,
+    );
   });
 
   describe("calculateAge", () => {

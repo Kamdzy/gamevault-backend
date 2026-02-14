@@ -81,6 +81,7 @@ describe("MetadataService", () => {
     service = new MetadataService(
       mockGamesService,
       mockGameMetadataService as any,
+      jest.requireMock("../../configuration").default,
     );
   });
 
