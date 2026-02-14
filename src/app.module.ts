@@ -1,13 +1,9 @@
 import { Module } from "@nestjs/common";
-import {
-  ConfigService,
-  ConfigModule as NestConfigModule,
-} from "@nestjs/config";
+import { ConfigModule as NestConfigModule } from "@nestjs/config";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { ScheduleModule } from "@nestjs/schedule";
 import configuration, { gamevaultConfiguration } from "./configuration";
-import { GAMEVAULT_CONFIG, getGamevaultConfig } from "./gamevault-config";
 import { DisableApiIfInterceptor } from "./interceptors/disable-api-if.interceptor";
 import { HttpLoggingInterceptor } from "./interceptors/http-logging.interceptor";
 import { AdminModule } from "./modules/admin/admin.module";
@@ -15,6 +11,7 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { ConfigModule as ApiConfigModule } from "./modules/config/config.module";
 import { DatabaseModule } from "./modules/database/database.module";
 import { GamesModule } from "./modules/games/games.module";
+import { GamevaultConfigModule } from "./modules/gamevault-config/gamevault-config.module";
 import { GarbageCollectionModule } from "./modules/garbage-collection/garbage-collection.module";
 import { MediaModule } from "./modules/media/media.module";
 import { MetadataModule } from "./modules/metadata/metadata.module";
@@ -31,6 +28,7 @@ import { WebUIModule } from "./modules/web-ui/web-ui.module";
       isGlobal: true,
       load: [gamevaultConfiguration],
     }),
+    GamevaultConfigModule,
     OtpModule,
     ApiConfigModule,
     AuthModule,
@@ -49,11 +47,6 @@ import { WebUIModule } from "./modules/web-ui/web-ui.module";
     ...(configuration.WEB_UI.ENABLED ? [WebUIModule] : []),
   ],
   providers: [
-    {
-      provide: GAMEVAULT_CONFIG,
-      inject: [ConfigService],
-      useFactory: getGamevaultConfig,
-    },
     {
       provide: APP_INTERCEPTOR,
       useClass: DisableApiIfInterceptor,
