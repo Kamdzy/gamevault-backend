@@ -50,13 +50,11 @@ export class DeveloperController {
   ): Promise<Paginated<DeveloperMetadata>> {
     const queryBuilder = this.developerRepository
       .createQueryBuilder("developer")
-      .leftJoinAndSelect("developer.games", "games", "games.deleted_at IS NULL")
+      .innerJoin("developer.games", "games", "games.deleted_at IS NULL")
       .where("developer.provider_slug = :provider_slug", {
         provider_slug: "gamevault",
       })
-      .groupBy("developer.id")
-      .addGroupBy("games.id")
-      .having("COUNT(games.id) > 0");
+      .groupBy("developer.id");
 
     // If no specific sort is provided, sort by the number of games in descending order
     if (query.sortBy?.length === 0) {

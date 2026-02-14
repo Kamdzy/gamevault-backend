@@ -50,13 +50,11 @@ export class TagsController {
   ): Promise<Paginated<TagMetadata>> {
     const queryBuilder = this.tagRepository
       .createQueryBuilder("tag")
-      .leftJoinAndSelect("tag.games", "games", "games.deleted_at IS NULL")
+      .innerJoin("tag.games", "games", "games.deleted_at IS NULL")
       .where("tag.provider_slug = :provider_slug", {
         provider_slug: "gamevault",
       })
-      .groupBy("tag.id")
-      .addGroupBy("games.id")
-      .having("COUNT(games.id) > 0");
+      .groupBy("tag.id");
 
     // If no specific sort is provided, sort by the number of games in descending order
     if (query.sortBy?.length === 0) {

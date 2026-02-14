@@ -50,13 +50,11 @@ export class PublisherController {
   ): Promise<Paginated<PublisherMetadata>> {
     const queryBuilder = this.publisherRepository
       .createQueryBuilder("publisher")
-      .leftJoinAndSelect("publisher.games", "games", "games.deleted_at IS NULL")
+      .innerJoin("publisher.games", "games", "games.deleted_at IS NULL")
       .where("publisher.provider_slug = :provider_slug", {
         provider_slug: "gamevault",
       })
-      .groupBy("publisher.id")
-      .addGroupBy("games.id")
-      .having("COUNT(games.id) > 0");
+      .groupBy("publisher.id");
 
     // If no specific sort is provided, sort by the number of games in descending order
     if (query.sortBy?.length === 0) {
