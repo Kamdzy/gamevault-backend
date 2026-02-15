@@ -9,6 +9,7 @@ ENV TZ="Etc/UTC" \
     NPM_CONFIG_PREFIX=/home/node/.npm-global \
     PNPM_HOME=/pnpm \
     SERVER_PORT=8080 \
+    SERVER_HTTPS_PORT=8443 \
     YES=yes \
     PATH="/home/node/.npm-global/bin:/pnpm:$PATH"
 
@@ -20,6 +21,7 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
     && apt update \
     && apt install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
     curl \
     g++ \
     make \
@@ -29,13 +31,15 @@ RUN mkdir -p /config /files /media /logs /db /plugins /savefiles \
     python-is-python3 \
     python3 \
     sudo \
-    # Install PostgreSQL client from the PostgreSQL Global Development Group (PGDG)
+    # Install the latest PostgreSQL client from the PostgreSQL Global Development Group (PGDG)
+    # pg_dump is backward-compatible, so the latest version works with all prior server versions
     && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh \
-    && apt install -y --no-install-recommends postgresql-client \
+    && apt-get update \
+    && apt install -y --no-install-recommends postgresql-client-$(apt-cache search --names-only '^postgresql-client-[0-9]+$' | sort -t'-' -k3 -n | tail -1 | grep -oP '\d+$') \
     # Clean up to reduce image size
     && apt clean && rm -rf /var/lib/apt/lists/* \
     # Install PNPM package manager globally
-    && npm i -g pnpm@^10.12.1
+    && npm i -g pnpm@^10.29.3
 
 # Set working directory for the application
 WORKDIR /app
@@ -76,8 +80,9 @@ RUN chown -R node:node /app/dist /config /files /media /logs /db /plugins /savef
     && chmod -R 777 /app/dist /config /files /media /logs /db /plugins /savefiles \
     && chmod +x /usr/local/bin/entrypoint.sh
 
-# Expose the server port
+# Expose the server ports (HTTP and HTTPS)
 EXPOSE ${SERVER_PORT}/tcp
+EXPOSE ${SERVER_HTTPS_PORT}/tcp
 
 # Add a health check for the service
 HEALTHCHECK --start-period=300s CMD curl -f http://localhost:${SERVER_PORT}/api/status || exit 1

@@ -14,67 +14,71 @@ import {
   stat,
   writeFile,
 } from "fs-extra";
-import mime from "mime";
 import path from "path";
 import filenameSanitizer from "sanitize-filename";
 import { DataSource } from "typeorm";
 import unidecode from "unidecode";
 import { promisify } from "util";
 
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 
 @Injectable()
 export class DatabaseService {
   private readonly logger = new Logger(this.constructor.name);
   private readonly execPromise = promisify(exec);
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
+  ) {}
 
   async backup(password: string): Promise<StreamableFile> {
-    if (configuration.TESTING.IN_MEMORY_DB) {
+    if (this.config.TESTING.IN_MEMORY_DB) {
       throw new NotAcceptableException(
         "This server can't backup its data as it uses an in-memory database.",
       );
     }
 
     this.validatePassword(password);
-    await this.disconnect();
 
-    let backupFile: Promise<StreamableFile>;
-
-    switch (configuration.DB.SYSTEM) {
+    switch (this.config.DB.SYSTEM) {
       case "POSTGRESQL":
-        backupFile = this.backupPostgresql(this.generateBackupFilepath());
-        break;
+        return this.backupPostgresql(this.generateBackupFilepath());
       case "SQLITE":
-        backupFile = this.backupSqlite(this.generateBackupFilepath());
-        break;
+        await this.disconnect();
+        try {
+          return await this.backupSqlite(this.generateBackupFilepath());
+        } finally {
+          await this.connect();
+        }
       default:
         throw new InternalServerErrorException(
           "This server's DB_SYSTEM environment variable is set to an unknown value.",
         );
     }
-
-    await this.connect();
-    return backupFile;
   }
 
   async restore(file: Express.Multer.File, password: string) {
-    if (configuration.TESTING.IN_MEMORY_DB) {
+    if (this.config.TESTING.IN_MEMORY_DB) {
       throw new NotAcceptableException(
         "This server can't restore backups as it uses an in-memory database.",
       );
     }
 
     this.validatePassword(password);
-    await this.disconnect();
 
-    switch (configuration.DB.SYSTEM) {
+    switch (this.config.DB.SYSTEM) {
       case "POSTGRESQL":
         await this.restorePostgresql(file);
         break;
       case "SQLITE":
-        await this.restoreSqlite(file);
+        await this.disconnect();
+        try {
+          await this.restoreSqlite(file);
+        } finally {
+          await this.connect();
+        }
         break;
       default:
         throw new InternalServerErrorException(
@@ -82,7 +86,6 @@ export class DatabaseService {
         );
     }
 
-    await this.connect();
     await this.migrate();
   }
 
@@ -108,8 +111,8 @@ export class DatabaseService {
     });
     try {
       await this.execPromise(
-        `pg_dump -w -F t -h ${configuration.DB.HOST} -p ${configuration.DB.PORT} -U ${configuration.DB.USERNAME} -d ${configuration.DB.DATABASE} -f ${backupFilePath}`,
-        { env: { PGPASSWORD: configuration.DB.PASSWORD } },
+        `pg_dump -w -F t -h ${this.config.DB.HOST} -p ${this.config.DB.PORT} -U ${this.config.DB.USERNAME} -d ${this.config.DB.DATABASE} -f ${backupFilePath}`,
+        { env: { PGPASSWORD: this.config.DB.PASSWORD } },
       );
 
       return this.createStreamableFile(backupFilePath);
@@ -124,7 +127,7 @@ export class DatabaseService {
       backupFilePath,
     });
     await copyFile(
-      `${configuration.VOLUMES.SQLITEDB}/database.sqlite`,
+      `${this.config.VOLUMES.SQLITEDB}/database.sqlite`,
       backupFilePath,
     );
 
@@ -142,19 +145,19 @@ export class DatabaseService {
       await writeFile("/tmp/gamevault_database_restore.db", file.buffer);
 
       await this.execPromise(
-        `dropdb --if-exists -f -w -h ${configuration.DB.HOST} -p ${configuration.DB.PORT} -U ${configuration.DB.USERNAME} ${configuration.DB.DATABASE}`,
-        { env: { PGPASSWORD: configuration.DB.PASSWORD } },
+        `dropdb --if-exists -f -w -h ${this.config.DB.HOST} -p ${this.config.DB.PORT} -U ${this.config.DB.USERNAME} ${this.config.DB.DATABASE}`,
+        { env: { PGPASSWORD: this.config.DB.PASSWORD } },
       );
 
       await this.execPromise(
-        `createdb -w -h ${configuration.DB.HOST} -p ${configuration.DB.PORT} -U ${configuration.DB.USERNAME} ${configuration.DB.DATABASE}`,
-        { env: { PGPASSWORD: configuration.DB.PASSWORD } },
+        `createdb -w -h ${this.config.DB.HOST} -p ${this.config.DB.PORT} -U ${this.config.DB.USERNAME} ${this.config.DB.DATABASE}`,
+        { env: { PGPASSWORD: this.config.DB.PASSWORD } },
       );
 
       try {
         await this.execPromise(
-          `pg_restore -O -w -F t -h ${configuration.DB.HOST} -p ${configuration.DB.PORT} -U ${configuration.DB.USERNAME} -d ${configuration.DB.DATABASE} /tmp/gamevault_database_restore.db`,
-          { env: { PGPASSWORD: configuration.DB.PASSWORD } },
+          `pg_restore -O -w -F t -h ${this.config.DB.HOST} -p ${this.config.DB.PORT} -U ${this.config.DB.USERNAME} -d ${this.config.DB.DATABASE} /tmp/gamevault_database_restore.db`,
+          { env: { PGPASSWORD: this.config.DB.PASSWORD } },
         );
 
         this.logger.log("Successfully restored PostgreSQL Database.");
@@ -175,18 +178,18 @@ export class DatabaseService {
         this.logger.log("Restoring pre-restore database.");
         try {
           await this.execPromise(
-            `dropdb --if-exists -f -w -h ${configuration.DB.HOST} -p ${configuration.DB.PORT} -U ${configuration.DB.USERNAME} ${configuration.DB.DATABASE}`,
-            { env: { PGPASSWORD: configuration.DB.PASSWORD } },
+            `dropdb --if-exists -f -w -h ${this.config.DB.HOST} -p ${this.config.DB.PORT} -U ${this.config.DB.USERNAME} ${this.config.DB.DATABASE}`,
+            { env: { PGPASSWORD: this.config.DB.PASSWORD } },
           );
 
           await this.execPromise(
-            `createdb -w -h ${configuration.DB.HOST} -p ${configuration.DB.PORT} -U ${configuration.DB.USERNAME} ${configuration.DB.DATABASE}`,
-            { env: { PGPASSWORD: configuration.DB.PASSWORD } },
+            `createdb -w -h ${this.config.DB.HOST} -p ${this.config.DB.PORT} -U ${this.config.DB.USERNAME} ${this.config.DB.DATABASE}`,
+            { env: { PGPASSWORD: this.config.DB.PASSWORD } },
           );
 
           await this.execPromise(
-            `pg_restore -O -w -F t -h ${configuration.DB.HOST} -p ${configuration.DB.PORT} -U ${configuration.DB.USERNAME} -d ${configuration.DB.DATABASE} /tmp/gamevault_database_pre_restore.db`,
-            { env: { PGPASSWORD: configuration.DB.PASSWORD } },
+            `pg_restore -O -w -F t -h ${this.config.DB.HOST} -p ${this.config.DB.PORT} -U ${this.config.DB.USERNAME} -d ${this.config.DB.DATABASE} /tmp/gamevault_database_pre_restore.db`,
+            { env: { PGPASSWORD: this.config.DB.PASSWORD } },
           );
           this.logger.log("Restored pre-restore database.");
         } catch (error) {
@@ -210,13 +213,11 @@ export class DatabaseService {
       size: file.size,
     });
     try {
-      if (
-        await pathExists(`${configuration.VOLUMES.SQLITEDB}/database.sqlite`)
-      ) {
+      if (await pathExists(`${this.config.VOLUMES.SQLITEDB}/database.sqlite`)) {
         this.backupSqlite("/tmp/gamevault_database_pre_restore.db");
       }
       await writeFile(
-        `${configuration.VOLUMES.SQLITEDB}/database.sqlite`,
+        `${this.config.VOLUMES.SQLITEDB}/database.sqlite`,
         file.buffer,
       );
     } catch (error) {
@@ -225,7 +226,7 @@ export class DatabaseService {
         this.logger.log("Restoring pre-restore database.");
         await copyFile(
           "/tmp/gamevault_database_pre_restore.db",
-          `${configuration.VOLUMES.SQLITEDB}/database.sqlite`,
+          `${this.config.VOLUMES.SQLITEDB}/database.sqlite`,
         );
         this.logger.log("Restored pre-restore database.");
       }
@@ -233,7 +234,7 @@ export class DatabaseService {
   }
 
   private validatePassword(password: string) {
-    if (configuration.DB.PASSWORD !== password) {
+    if (this.config.DB.PASSWORD !== password) {
       throw new UnauthorizedException(
         "The database password provided in the X-Database-Password Header is incorrect.",
       );
@@ -243,7 +244,7 @@ export class DatabaseService {
   private generateBackupFilepath(): string {
     const now = new Date();
     const timestamp = now.toISOString().replace(/[:.]/g, "-");
-    return `/tmp/gamevault_${configuration.SERVER.VERSION}_database_backup_${timestamp}.db`;
+    return `/tmp/gamevault_${this.config.SERVER.VERSION}_database_backup_${timestamp}.db`;
   }
 
   private async createStreamableFile(
@@ -251,6 +252,7 @@ export class DatabaseService {
   ): Promise<StreamableFile> {
     const file = createReadStream(filePath);
     const length = (await stat(filePath)).size;
+    const { default: mime } = await import("mime");
     const type = mime.getType(filePath);
     const filename = filenameSanitizer(unidecode(path.basename(filePath)));
 

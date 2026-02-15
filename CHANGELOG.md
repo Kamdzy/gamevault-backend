@@ -1,5 +1,30 @@
 # GameVault Backend Server Changelog
 
+## 16.3.0
+
+### Changes
+
+- Various File Indexing Optimizations
+- [#305](https://github.com/Phalcode/gamevault-backend/issues/305) Fixed backend failing to start when the game directory contains unreadable subdirectories (e.g. `lost+found`). Inaccessible paths are now gracefully skipped with a warning.
+- [#393](https://github.com/Phalcode/gamevault-backend/issues/393) Added .AppImage as supported Linux Portable File.
+- [#368](https://github.com/Phalcode/gamevault-backend/issues/368) Added an admin API to update news contents.
+- [#256](https://github.com/Phalcode/gamevault-backend/issues/256) Implemented HTTPS support. See Docs for the relevant config variables.
+- [#396](https://github.com/Phalcode/gamevault-backend/issues/396) Fixed Plugin Load Error when plugin directory doesn't exist in development setup.
+- [#397](https://github.com/Phalcode/gamevault-backend/issues/397) Fixed Routes yielding Code 500 when VOLUMES_CONFIG is a relative path.
+- [#400](https://github.com/Phalcode/gamevault-backend/issues/400) Added `GAMES_WINDOWS_SETUP_DEFAULT_INSTALL_PARAMETERS` configuration variable to customize default Windows installer parameters.
+- [#357](https://github.com/Phalcode/gamevault-backend/issues/357) Fixed UNPLAYED games not being filtered correctly
+- [#388](https://github.com/Phalcode/gamevault-backend/issues/388) Fixed PG Backups not working on newer Postgres Versions.
+- [#398](https://github.com/Phalcode/gamevault-backend/issues/398) Implemented `WINDOWS_SOFTWARE` and `LINUX_SOFTWARE` game types, and added support for using the type with `(W_SW)` and `(L_SW)` flags in the filename.
+- [#355](https://github.com/Phalcode/gamevault-backend/issues/355) Implemented Time To Beat from IGDB as average playtime metadata (in minutes).
+- Stopped using deprecated IGDB API fields: Migrated to non-deprecated age rating, game status, and related structures.
+- Fixed metadata list endpoints (`/publishers`, `/developers`, `/genres`, `/tags`) to only return entries linked to at least one non-deleted game (excluding entities linked only to soft-deleted games).
+- Added controller tests to verify metadata list endpoints enforce non-deleted game association.
+- [#282](https://github.com/Phalcode/gamevault-backend/issues/282) Implemented a secure admin API to upload game files directly to the server. Added `GAMES_MAX_UPLOAD_SIZE` configuration variable (default: 50 GB).
+- Implemented an admin API to delete game files from disk. The file indexer automatically handles the database cleanup.
+- [#337](https://github.com/Phalcode/gamevault-backend/issues/337) Added Docker Secrets support via the `_FILE` suffix for all environment variables (e.g. `DB_PASSWORD_FILE`, `SERVER_PORT_FILE`).
+- Migrated backend configuration to NestJS Config (`@nestjs/config`) as the global config source.
+- Added YAML-based configuration support via `config.yaml` / `config.yml` in the config volume (`VOLUMES_CONFIG`) with precedence: `*_FILE` > env > YAML > defaults.
+
 ## 16.2.0
 
 ### Changes

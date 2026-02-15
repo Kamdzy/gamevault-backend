@@ -18,6 +18,7 @@ import { Repository } from "typeorm";
 import { MinimumRole } from "../../../decorators/minimum-role.decorator";
 import { PaginateQueryOptions } from "../../../decorators/pagination.decorator";
 import { ApiOkResponsePaginated } from "../../../globals";
+import { GamevaultGame } from "../../games/gamevault-game.entity";
 import { Role } from "../../users/models/role.enum";
 import { PublisherMetadata } from "./publisher.metadata.entity";
 
@@ -50,18 +51,21 @@ export class PublisherController {
   ): Promise<Paginated<PublisherMetadata>> {
     const queryBuilder = this.publisherRepository
       .createQueryBuilder("publisher")
-      .leftJoinAndSelect("publisher.games", "games", "games.deleted_at IS NULL")
+      .innerJoin("publisher.games", "games")
+      .innerJoin(
+        GamevaultGame,
+        "game",
+        "game.metadata_id = games.id AND game.deleted_at IS NULL",
+      )
       .where("publisher.provider_slug = :provider_slug", {
         provider_slug: "gamevault",
       })
-      .groupBy("publisher.id")
-      .addGroupBy("games.id")
-      .having("COUNT(games.id) > 0");
+      .groupBy("publisher.id");
 
     // If no specific sort is provided, sort by the number of games in descending order
     if (query.sortBy?.length === 0) {
       queryBuilder
-        .addSelect("COUNT(games.id)", "games_count")
+        .addSelect("COUNT(DISTINCT game.id)", "games_count")
         .orderBy("games_count", "DESC");
     }
 

@@ -1,15 +1,19 @@
 import { ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { AuthGuard } from "@nestjs/passport";
-import configuration from "../../../configuration";
+import { AppConfiguration } from "../../../configuration";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { SKIP_GUARDS_KEY } from "../../../decorators/skip-guards.decorator";
 
 @Injectable()
 export class AuthenticationGuard extends AuthGuard("auth") {
   private readonly logger = new Logger(this.constructor.name);
-  constructor(private readonly reflector: Reflector) {
+  constructor(
+    private readonly reflector: Reflector,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
+  ) {
     super();
-    if (configuration.TESTING.AUTHENTICATION_DISABLED) {
+    if (this.config.TESTING.AUTHENTICATION_DISABLED) {
       this.logger.warn({
         message: "Skipping Authentication Checks.",
         reason: "TESTING_AUTHENTICATION_DISABLED is set to true.",
@@ -28,7 +32,7 @@ export class AuthenticationGuard extends AuthGuard("auth") {
       return true;
     }
 
-    if (configuration.TESTING.AUTHENTICATION_DISABLED) {
+    if (this.config.TESTING.AUTHENTICATION_DISABLED) {
       this.logger.debug({
         message: "Skipping Authentication Checks.",
         reason: "TESTING_AUTHENTICATION_DISABLED is set to true.",

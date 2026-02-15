@@ -31,8 +31,12 @@ export class IgdbMetadataProviderService extends MetadataProvider {
   readonly fieldsToInclude = [
     "*",
     "age_ratings.*",
+    "age_ratings.organization.*",
+    "age_ratings.rating_category.*",
+    "age_ratings.rating_category.organization.*",
     "cover.*",
     "genres.*",
+    "game_status.*",
     "involved_companies.*",
     "involved_companies.company.*",
     "keywords.*",
@@ -149,12 +153,23 @@ export class IgdbMetadataProviderService extends MetadataProvider {
         `Game with id ${provider_data_id} not found on IGDB.`,
       );
 
-    return this.mapGameMetadata(gameResult.data[0] as igdbModels.IGame);
+    const averagePlaytime = await this.fetchAveragePlaytime(
+      Number(provider_data_id),
+    );
+
+    return this.mapGameMetadata(
+      gameResult.data[0] as igdbModels.IGame,
+      averagePlaytime,
+    );
   }
 
-  private async mapGameMetadata(game: igdbModels.IGame): Promise<GameMetadata> {
+  private async mapGameMetadata(
+    game: igdbModels.IGame,
+    averagePlaytime?: number,
+  ): Promise<GameMetadata> {
     return {
       age_rating: this.calculateAverageAgeRating(game.age_ratings, game.name),
+      average_playtime: averagePlaytime,
       provider_slug: this.slug,
       provider_data_id: game.id?.toString(),
       provider_data_url: game.url,
@@ -168,7 +183,9 @@ export class IgdbMetadataProviderService extends MetadataProvider {
           : game.summary || game.storyline || null,
       rating: game.total_rating,
       url_websites: game.websites?.map((website) => website.url),
-      early_access: [2, 3, 4].includes(game.status),
+      early_access: ["alpha", "beta", "early access"].includes(
+        game.game_status?.status?.toLowerCase(),
+      ),
       url_screenshots: [
         ...(game.screenshots || []),
         ...(game.artworks || []),
@@ -266,6 +283,48 @@ export class IgdbMetadataProviderService extends MetadataProvider {
     });
     return igdb(configuration.METADATA.IGDB.CLIENT_ID, token);
   }
+
+  private async fetchAveragePlaytime(
+    gameId: number,
+  ): Promise<number | undefined> {
+    try {
+      const client = await this.getClient();
+      const result = await client
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .request("game_time_to_beats" as any)
+        .pipe(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          fields(["normally"] as any),
+          where("game_id", "=", gameId),
+        )
+        .execute();
+
+      const timeToBeat = result.data?.[0] as
+        | igdbModels.IGameTimeToBeat
+        | undefined;
+
+      if (timeToBeat?.normally) {
+        const minutes = Math.round(timeToBeat.normally / 60);
+        this.logger.debug({
+          message: `Fetched time to beat from IGDB.`,
+          gameId,
+          normallySeconds: timeToBeat.normally,
+          normallyMinutes: minutes,
+        });
+        return minutes;
+      }
+
+      return undefined;
+    } catch (error) {
+      this.logger.warn({
+        message: `Failed to fetch time to beat from IGDB.`,
+        gameId,
+        error,
+      });
+      return undefined;
+    }
+  }
+
   private replaceUrl(url: string, from: string, to: string) {
     if (!url) return undefined;
     return url.replace("//", "https://").replace(from, to);
@@ -298,7 +357,9 @@ export class IgdbMetadataProviderService extends MetadataProvider {
     const ages = ageRatings
       .map((rating) =>
         GameVaultIgdbAgeRatingMap.find(
-          (entry) => entry.igdbEnumValue === rating.rating,
+          (entry) =>
+            entry.ratingName.toLowerCase() ===
+            rating.rating_category?.rating?.toLowerCase(),
         ),
       )
       .filter((entry) => entry != null)

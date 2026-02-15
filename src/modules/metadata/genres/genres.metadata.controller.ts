@@ -18,6 +18,7 @@ import { Repository } from "typeorm";
 import { MinimumRole } from "../../../decorators/minimum-role.decorator";
 import { PaginateQueryOptions } from "../../../decorators/pagination.decorator";
 import { ApiOkResponsePaginated } from "../../../globals";
+import { GamevaultGame } from "../../games/gamevault-game.entity";
 import { Role } from "../../users/models/role.enum";
 import { GenreMetadata } from "./genre.metadata.entity";
 
@@ -50,18 +51,21 @@ export class GenreController {
   ): Promise<Paginated<GenreMetadata>> {
     const queryBuilder = this.genreRepository
       .createQueryBuilder("genre")
-      .leftJoinAndSelect("genre.games", "games", "games.deleted_at IS NULL")
+      .innerJoin("genre.games", "games")
+      .innerJoin(
+        GamevaultGame,
+        "game",
+        "game.metadata_id = games.id AND game.deleted_at IS NULL",
+      )
       .where("genre.provider_slug = :provider_slug", {
         provider_slug: "gamevault",
       })
-      .groupBy("genre.id")
-      .addGroupBy("games.id")
-      .having("COUNT(games.id) > 0");
+      .groupBy("genre.id");
 
     // If no specific sort is provided, sort by the number of games in descending order
     if (query.sortBy?.length === 0) {
       queryBuilder
-        .addSelect("COUNT(games.id)", "games_count")
+        .addSelect("COUNT(DISTINCT game.id)", "games_count")
         .orderBy("games_count", "DESC");
     }
 
