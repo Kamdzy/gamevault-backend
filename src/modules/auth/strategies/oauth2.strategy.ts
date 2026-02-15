@@ -9,7 +9,8 @@ import { PassportStrategy } from "@nestjs/passport";
 import { randomBytes } from "crypto";
 import { VerifiedCallback } from "passport-jwt";
 import { Strategy } from "passport-oauth2";
-import configuration from "../../../configuration";
+import { AppConfiguration } from "../../../configuration";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { GamevaultUser } from "../../users/gamevault-user.entity";
 import { UsersService } from "../../users/users.service";
 import { OidcUserInfo } from "../models/oidc-user-info.interface";
@@ -18,12 +19,14 @@ import PassportUserProfile from "../models/passport-user-profile.interface";
 @Injectable()
 export class OAuth2Strategy extends PassportStrategy(Strategy, "oauth2", 6) {
   private readonly logger = new Logger(this.constructor.name);
+  private readonly configuration: AppConfiguration;
 
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
+    @InjectGamevaultConfig() config: AppConfiguration,
   ) {
-    const { AUTH } = configuration;
+    const { AUTH } = config;
     if (
       !AUTH.OAUTH2.AUTH_URL ||
       !AUTH.OAUTH2.TOKEN_URL ||
@@ -43,7 +46,9 @@ export class OAuth2Strategy extends PassportStrategy(Strategy, "oauth2", 6) {
       clientSecret: AUTH.OAUTH2.CLIENT_SECRET,
       callbackURL: AUTH.OAUTH2.CALLBACK_URL,
       scope: AUTH.OAUTH2.SCOPES,
+      state: true,
     });
+    this.configuration = config;
   }
 
   /**
@@ -53,7 +58,7 @@ export class OAuth2Strategy extends PassportStrategy(Strategy, "oauth2", 6) {
   private async fetchUserInfo(
     accessToken: string,
   ): Promise<Partial<PassportUserProfile>> {
-    const userInfoUrl = configuration.AUTH.OAUTH2.USERINFO_URL;
+    const userInfoUrl = this.configuration.AUTH.OAUTH2.USERINFO_URL;
     if (!userInfoUrl) {
       return {};
     }
@@ -104,11 +109,11 @@ export class OAuth2Strategy extends PassportStrategy(Strategy, "oauth2", 6) {
     const missingFields: string[] = [];
     if (!profile.id) missingFields.push("sub");
     if (!profile.preferred_username) missingFields.push("username");
-    if (configuration.USERS.REQUIRE_EMAIL && !profile.emails?.length)
+    if (this.configuration.USERS.REQUIRE_EMAIL && !profile.emails?.length)
       missingFields.push("email");
-    if (configuration.USERS.REQUIRE_FIRST_NAME && !profile.name?.givenName)
+    if (this.configuration.USERS.REQUIRE_FIRST_NAME && !profile.name?.givenName)
       missingFields.push("given_name");
-    if (configuration.USERS.REQUIRE_LAST_NAME && !profile.name?.familyName)
+    if (this.configuration.USERS.REQUIRE_LAST_NAME && !profile.name?.familyName)
       missingFields.push("family_name");
 
     if (missingFields.length > 0) {

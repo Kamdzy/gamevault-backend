@@ -1,4 +1,4 @@
-import { copy, readdir } from "fs-extra";
+import { copy, mkdir, readdir } from "fs-extra";
 import path, { join, resolve } from "path";
 import configuration from "./configuration";
 import { GameVaultPluginModule } from "./globals";
@@ -7,20 +7,20 @@ import { default as logger } from "./logging";
 export default async function loadPlugins() {
   try {
     const pluginDir = configuration.VOLUMES.PLUGINS;
-    let injectDir = "/tmp";
+    let injectDir: string;
 
     if (configuration.VOLUMES.PLUGINS == "./.local/plugins") {
       // In Development
+      injectDir = path.resolve(__dirname, "..", pluginDir);
       logger.log({
         context: "PluginLoader",
         message: "Short-Circuiting Plugins.",
         pluginDir,
         injectDir,
       });
-      injectDir = path.resolve(__dirname, "..", pluginDir);
     } else {
-      injectDir = path.resolve(`dist/src/modules`);
       // In Production
+      injectDir = path.resolve(`dist/src/modules`);
       logger.log({
         context: "PluginLoader",
         message: "Injecting Plugins.",
@@ -29,6 +29,8 @@ export default async function loadPlugins() {
       });
       await copy(pluginDir, injectDir);
     }
+
+    await mkdir(injectDir, { recursive: true });
 
     const pluginModuleFiles = (
       await readdir(injectDir, {

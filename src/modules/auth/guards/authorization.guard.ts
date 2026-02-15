@@ -7,7 +7,8 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 
-import configuration from "../../../configuration";
+import { AppConfiguration } from "../../../configuration";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { MINIMUM_ROLE_KEY } from "../../../decorators/minimum-role.decorator";
 import { SKIP_GUARDS_KEY } from "../../../decorators/skip-guards.decorator";
 import { Role } from "../../users/models/role.enum";
@@ -19,8 +20,9 @@ export class AuthorizationGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly usersService: UsersService,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {
-    if (configuration.TESTING.AUTHENTICATION_DISABLED) {
+    if (this.config.TESTING.AUTHENTICATION_DISABLED) {
       this.logger.warn({
         message: "Skipping Authorization Checks.",
         reason: "TESTING_AUTHENTICATION_DISABLED is set to true.",
@@ -41,7 +43,7 @@ export class AuthorizationGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest();
-    if (configuration.TESTING.AUTHENTICATION_DISABLED) {
+    if (this.config.TESTING.AUTHENTICATION_DISABLED) {
       const user = (await this.usersService.find())[0];
       this.logger.debug({
         message: "Skipping Authorization Checks and using first user.",

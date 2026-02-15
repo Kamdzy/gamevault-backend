@@ -9,7 +9,8 @@ import {
 import { Reflector } from "@nestjs/core";
 import { Request } from "express";
 import { Socket } from "socket.io";
-import configuration from "../../../configuration";
+import { AppConfiguration } from "../../../configuration";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
 import { SKIP_GUARDS_KEY } from "../../../decorators/skip-guards.decorator";
 import { ApiKeyService } from "../../users/api-key.service";
 import { Role } from "../../users/models/role.enum";
@@ -21,6 +22,7 @@ export class ApiKeyGuard implements CanActivate {
   constructor(
     private readonly apiKeyService: ApiKeyService,
     private readonly reflector: Reflector,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -34,7 +36,7 @@ export class ApiKeyGuard implements CanActivate {
       return true;
     }
 
-    if (configuration.TESTING.AUTHENTICATION_DISABLED) {
+    if (this.config.TESTING.AUTHENTICATION_DISABLED) {
       this.logger.debug({
         message: "Skipping Authentication Checks.",
         reason: "TESTING_AUTHENTICATION_DISABLED is set to true.",

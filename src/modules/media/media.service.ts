@@ -13,7 +13,8 @@ import fileTypeChecker from "file-type-checker";
 import { pathExists, remove, writeFile } from "fs-extra";
 import { Repository } from "typeorm";
 
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { logMedia } from "../../logging";
 import { UsersService } from "../users/users.service";
 import { Media } from "./media.entity";
@@ -27,6 +28,7 @@ export class MediaService {
     private readonly mediaRepository: Repository<Media>,
     @Inject(forwardRef(() => UsersService))
     private readonly usersService: UsersService,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
 
   public async isAvailable(id: number): Promise<boolean> {
@@ -45,10 +47,7 @@ export class MediaService {
     try {
       const media = await this.mediaRepository.findOneByOrFail({ id });
       if (
-        !(
-          (await pathExists(media.file_path)) ||
-          configuration.TESTING.MOCK_FILES
-        )
+        !((await pathExists(media.file_path)) || this.config.TESTING.MOCK_FILES)
       ) {
         await this.delete(media);
         throw new NotFoundException("Media not found on filesystem.");
@@ -88,7 +87,7 @@ export class MediaService {
       const validatedMediaBuffer = await this.validate(mediaBuffer);
 
       media.type = validatedMediaBuffer.mimeType;
-      media.file_path = `${configuration.VOLUMES.MEDIA}/${randomUUID()}.${
+      media.file_path = `${this.config.VOLUMES.MEDIA}/${randomUUID()}.${
         validatedMediaBuffer.extension
       }`;
 
@@ -134,7 +133,7 @@ export class MediaService {
     path: string,
     mediaBuffer: Buffer,
   ): Promise<void> {
-    if (configuration.TESTING.MOCK_FILES) {
+    if (this.config.TESTING.MOCK_FILES) {
       this.logger.warn({
         message: "Not saving media to the filesystem.",
         reason: "TESTING_MOCK_FILES is set to true.",
@@ -149,7 +148,7 @@ export class MediaService {
   }
 
   async delete(media: Media): Promise<void> {
-    if (configuration.TESTING.MOCK_FILES) {
+    if (this.config.TESTING.MOCK_FILES) {
       this.logger.warn({
         message: "Not deleting media from filesystem.",
         reason: "TESTING_MOCK_FILES is set to true.",
@@ -211,7 +210,7 @@ export class MediaService {
         "File type could not be detected. Please use a different file.",
       );
     }
-    if (!configuration.MEDIA.SUPPORTED_FORMATS.includes(type.mimeType)) {
+    if (!this.config.MEDIA.SUPPORTED_FORMATS.includes(type.mimeType)) {
       throw new BadRequestException(
         errorContextObject,
         `This file is a "${type.mimeType}", which is not supported.`,
@@ -233,7 +232,7 @@ export class MediaService {
         await this.usersService.findOneByUsernameOrFail(username);
     }
 
-    media.file_path = `${configuration.VOLUMES.MEDIA}/${randomUUID()}.${
+    media.file_path = `${this.config.VOLUMES.MEDIA}/${randomUUID()}.${
       fileType.extension
     }`;
     return media;

@@ -18,6 +18,7 @@ import { Repository } from "typeorm";
 import { MinimumRole } from "../../../decorators/minimum-role.decorator";
 import { PaginateQueryOptions } from "../../../decorators/pagination.decorator";
 import { ApiOkResponsePaginated } from "../../../globals";
+import { GamevaultGame } from "../../games/gamevault-game.entity";
 import { Role } from "../../users/models/role.enum";
 import { TagMetadata } from "./tag.metadata.entity";
 
@@ -50,18 +51,21 @@ export class TagsController {
   ): Promise<Paginated<TagMetadata>> {
     const queryBuilder = this.tagRepository
       .createQueryBuilder("tag")
-      .leftJoinAndSelect("tag.games", "games", "games.deleted_at IS NULL")
+      .innerJoin("tag.games", "games")
+      .innerJoin(
+        GamevaultGame,
+        "game",
+        "game.metadata_id = games.id AND game.deleted_at IS NULL",
+      )
       .where("tag.provider_slug = :provider_slug", {
         provider_slug: "gamevault",
       })
-      .groupBy("tag.id")
-      .addGroupBy("games.id")
-      .having("COUNT(games.id) > 0");
+      .groupBy("tag.id");
 
     // If no specific sort is provided, sort by the number of games in descending order
     if (query.sortBy?.length === 0) {
       queryBuilder
-        .addSelect("COUNT(games.id)", "games_count")
+        .addSelect("COUNT(DISTINCT game.id)", "games_count")
         .orderBy("games_count", "DESC");
     }
 
