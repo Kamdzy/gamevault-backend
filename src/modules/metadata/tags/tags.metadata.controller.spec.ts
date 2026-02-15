@@ -1,6 +1,7 @@
 import { PaginateQuery, PaginationType, paginate } from "nestjs-paginate";
 import { Repository } from "typeorm";
 
+import { GamevaultGame } from "../../games/gamevault-game.entity";
 import { TagMetadata } from "./tag.metadata.entity";
 import { TagsController } from "./tags.metadata.controller";
 
@@ -44,10 +45,16 @@ describe("TagsController", () => {
 
     await controller.getTags({} as PaginateQuery);
 
-    expect(queryBuilder.innerJoin).toHaveBeenCalledWith(
+    expect(queryBuilder.innerJoin).toHaveBeenNthCalledWith(
+      1,
       "tag.games",
       "games",
-      "games.deleted_at IS NULL",
+    );
+    expect(queryBuilder.innerJoin).toHaveBeenNthCalledWith(
+      2,
+      GamevaultGame,
+      "game",
+      "game.metadata_id = games.id AND game.deleted_at IS NULL",
     );
     expect(queryBuilder.groupBy).toHaveBeenCalledWith("tag.id");
     expect(paginate).toHaveBeenCalledWith(
@@ -69,7 +76,7 @@ describe("TagsController", () => {
     await controller.getTags({ sortBy: [] } as unknown as PaginateQuery);
 
     expect(queryBuilder.addSelect).toHaveBeenCalledWith(
-      "COUNT(games.id)",
+      "COUNT(DISTINCT game.id)",
       "games_count",
     );
     expect(queryBuilder.orderBy).toHaveBeenCalledWith("games_count", "DESC");

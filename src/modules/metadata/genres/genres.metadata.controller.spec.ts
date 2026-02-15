@@ -1,6 +1,7 @@
 import { PaginateQuery, PaginationType, paginate } from "nestjs-paginate";
 import { Repository } from "typeorm";
 
+import { GamevaultGame } from "../../games/gamevault-game.entity";
 import { GenreMetadata } from "./genre.metadata.entity";
 import { GenreController } from "./genres.metadata.controller";
 
@@ -44,10 +45,16 @@ describe("GenreController", () => {
 
     await controller.getGenres({} as PaginateQuery);
 
-    expect(queryBuilder.innerJoin).toHaveBeenCalledWith(
+    expect(queryBuilder.innerJoin).toHaveBeenNthCalledWith(
+      1,
       "genre.games",
       "games",
-      "games.deleted_at IS NULL",
+    );
+    expect(queryBuilder.innerJoin).toHaveBeenNthCalledWith(
+      2,
+      GamevaultGame,
+      "game",
+      "game.metadata_id = games.id AND game.deleted_at IS NULL",
     );
     expect(queryBuilder.groupBy).toHaveBeenCalledWith("genre.id");
     expect(paginate).toHaveBeenCalledWith(
@@ -69,7 +76,7 @@ describe("GenreController", () => {
     await controller.getGenres({ sortBy: [] } as unknown as PaginateQuery);
 
     expect(queryBuilder.addSelect).toHaveBeenCalledWith(
-      "COUNT(games.id)",
+      "COUNT(DISTINCT game.id)",
       "games_count",
     );
     expect(queryBuilder.orderBy).toHaveBeenCalledWith("games_count", "DESC");
