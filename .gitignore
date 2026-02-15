@@ -2,7 +2,6 @@
 # compiled output
 /dist
 /node_modules
-
 .local/*/*
 !.gitkeep
 
@@ -19,6 +18,7 @@ lerna-debug.log*
 
 # Tests
 /coverage
+/coverage-target
 /.nyc_output
 
 # IDEs and editors
