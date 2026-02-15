@@ -8,10 +8,6 @@ on:
       - develop
       - early-access
 
-permissions:
-  contents: read
-  packages: read
-
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
