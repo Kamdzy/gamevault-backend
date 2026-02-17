@@ -724,6 +724,30 @@ export class FilesService implements OnApplicationBootstrap {
     return checkedGames;
   }
 
+  private shouldIncludeFile(filename: string): boolean {
+    const shouldExclude = configuration.GAMES.SEARCH_EXCLUDE_FILE_REGEX?.test(filename);
+    if (shouldExclude) {
+      this.logger.debug({
+        message: `Indexer ignoring filename due to exclusion settings.`,
+        reason: "Excluded by configuration.",
+        filename,
+      });
+    }
+    return this.isValidFilePath(filename) && !shouldExclude;
+  }
+
+  private shouldIncludeDirectory(dirname: string): boolean {
+    const shouldExclude = configuration.GAMES.SEARCH_EXCLUDE_DIR_REGEX?.test(dirname);
+    if (shouldExclude) {
+      this.logger.debug({
+        message: `Indexer ignoring dirname due to exclusion settings.`,
+        reason: "Excluded by configuration.",
+        dirname,
+      });
+    }
+    return !shouldExclude;
+  }
+
   /**
    * This method retrieves an array of objects representing game files in the
    * file system.
@@ -737,7 +761,8 @@ export class FilesService implements OnApplicationBootstrap {
       const stream = readdirp(configuration.VOLUMES.FILES, {
         type: "files",
         depth: configuration.GAMES.SEARCH_RECURSIVE ? undefined : 0,
-        fileFilter: (entry) => this.isValidFilePath(entry.basename),
+        fileFilter: (entry) => this.shouldIncludeFile(entry.basename),
+        directoryFilter: (entry) => this.shouldIncludeDirectory(entry.basename),
         alwaysStat: true, // ensure size is available for integrity checks
       });
 
