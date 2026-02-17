@@ -724,6 +724,7 @@ export class FilesService implements OnApplicationBootstrap {
     return checkedGames;
   }
 
+  /** Checks whether a given filename should be included by the indexer. */
   private shouldIncludeFile(filename: string): boolean {
     const shouldExclude =
       configuration.GAMES.SEARCH_EXCLUDE_FILE_REGEX?.test(filename);
@@ -737,6 +738,7 @@ export class FilesService implements OnApplicationBootstrap {
     return !shouldExclude && this.isValidFilePath(filename);
   }
 
+  /** Checks whether a given dirname should be included by the indexer. */
   private shouldIncludeDirectory(dirname: string): boolean {
     const shouldExclude =
       configuration.GAMES.SEARCH_EXCLUDE_DIR_REGEX?.test(dirname);
