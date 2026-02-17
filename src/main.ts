@@ -3,7 +3,10 @@ dotenv.config();
 
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
-import { NestExpressApplication } from "@nestjs/platform-express";
+import {
+  ExpressAdapter,
+  NestExpressApplication,
+} from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import compression from "compression";
 import cookieparser from "cookie-parser";
@@ -11,8 +14,13 @@ import helmet from "helmet";
 import morgan from "morgan";
 //import { AsyncApiDocumentBuilder, AsyncApiModule } from "nestjs-asyncapi";
 
-import { Response } from "express";
+import { createHash } from "crypto";
+import express, { Response } from "express";
+import session from "express-session";
 import fs from "fs";
+import { readFileSync } from "fs-extra";
+import { createServer as createHttpServer } from "http";
+import { createServer as createHttpsServer } from "https";
 import path from "path";
 import { Worker } from "worker_threads";
 import { AppModule } from "./app.module";
@@ -33,9 +41,14 @@ async function bootstrap(): Promise<void> {
 
   Reflect.defineMetadata("imports", modules, AppModule);
   // Create App
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    logger: winston,
-  });
+  const server = express();
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule,
+    new ExpressAdapter(server),
+    {
+      logger: winston,
+    },
+  );
 
   // To Support Reverse Proxies
   app.set("trust proxy", 1);
@@ -67,6 +80,15 @@ async function bootstrap(): Promise<void> {
 
   // Security Measurements
   app.use(helmet({ contentSecurityPolicy: false }));
+
+  // Sessions
+  app.use(
+    session({
+      secret: createHash("sha256")
+        .update(configuration.AUTH.SEED)
+        .digest("hex"),
+    }),
+  );
 
   // Cookies
   app.use(cookieparser());
@@ -188,13 +210,44 @@ async function bootstrap(): Promise<void> {
     res.redirect(308, "/api/status");
   });
 
-  await app.listen(configuration.SERVER.PORT);
+  await app.init();
+
+  // Start HTTP server
+  createHttpServer(server).listen(configuration.SERVER.PORT);
+
+  // Additionally start HTTPS server if enabled
+  if (configuration.SERVER.HTTPS.ENABLED) {
+    // Validate required HTTPS certificate paths
+    if (!configuration.SERVER.HTTPS.KEY_PATH) {
+      throw new Error(
+        "SERVER_HTTPS_KEY_PATH must be set when HTTPS is enabled.",
+      );
+    }
+    if (!configuration.SERVER.HTTPS.CERT_PATH) {
+      throw new Error(
+        "SERVER_HTTPS_CERT_PATH must be set when HTTPS is enabled.",
+      );
+    }
+    const httpsOptions: Record<string, Buffer> = {
+      key: readFileSync(configuration.SERVER.HTTPS.KEY_PATH),
+      cert: readFileSync(configuration.SERVER.HTTPS.CERT_PATH),
+    };
+    if (configuration.SERVER.HTTPS.CA_CERT_PATH) {
+      httpsOptions.ca = readFileSync(configuration.SERVER.HTTPS.CA_CERT_PATH);
+    }
+    createHttpsServer(httpsOptions, server).listen(
+      configuration.SERVER.HTTPS.PORT,
+    );
+  }
 
   logger.log({
     context: "Initialization",
     message: `Started GameVault Server.`,
     version: configuration.SERVER.VERSION,
     port: configuration.SERVER.PORT,
+    httpsPort: configuration.SERVER.HTTPS.ENABLED
+      ? configuration.SERVER.HTTPS.PORT
+      : undefined,
     config: getCensoredConfiguration(),
   });
 

@@ -16,16 +16,19 @@ import {
   stat,
   writeFile,
 } from "fs-extra";
-import mime from "mime";
 import path, { basename, dirname } from "path";
-import configuration from "../../configuration";
+import { AppConfiguration } from "../../configuration";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
 import { UsersService } from "../users/users.service";
 
 @Injectable()
 export class SavefileService {
   private readonly logger = new Logger(this.constructor.name);
 
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    @InjectGamevaultConfig() private readonly config: AppConfiguration,
+  ) {}
 
   /**
    * Uploads a new save file for a user and game
@@ -93,6 +96,7 @@ export class SavefileService {
       userId,
       gameId,
     });
+    const { default: mime } = await import("mime");
     return new StreamableFile(file, {
       disposition: `attachment; filename="${basename(path)}"`,
       length: (await stat(path)).size,
@@ -118,7 +122,7 @@ export class SavefileService {
       userId,
       executorUsername,
     );
-    if (configuration.TESTING.MOCK_FILES) {
+    if (this.config.TESTING.MOCK_FILES) {
       this.logger.warn({
         message: "Not deleting media from filesystem.",
         reason: "TESTING_MOCK_FILES is set to true.",
@@ -161,7 +165,7 @@ export class SavefileService {
     gameId: number,
   ): Promise<string[]> {
     try {
-      if (configuration.TESTING.MOCK_FILES) {
+      if (this.config.TESTING.MOCK_FILES) {
         this.logger.warn({
           message: "Not saving media to the filesystem.",
           reason: "TESTING_MOCK_FILES is set to true.",
@@ -207,7 +211,7 @@ export class SavefileService {
     path: string,
     savefileBuffer: Buffer,
   ): Promise<void> {
-    if (configuration.TESTING.MOCK_FILES) {
+    if (this.config.TESTING.MOCK_FILES) {
       this.logger.warn({
         message: "Not saving media to the filesystem.",
         reason: "TESTING_MOCK_FILES is set to true.",
@@ -234,7 +238,7 @@ export class SavefileService {
     gameId: number,
     installationId: string = randomUUID(),
   ): string {
-    return `${configuration.VOLUMES.SAVEFILES}/users/${userId}/games/${gameId}/${Date.now()}_${installationId}.zip`;
+    return `${this.config.VOLUMES.SAVEFILES}/users/${userId}/games/${gameId}/${Date.now()}_${installationId}.zip`;
   }
 
   /**
@@ -277,7 +281,7 @@ export class SavefileService {
     gameId: number,
     executorUsername: string,
   ): Promise<void> {
-    const maxSaves = configuration.SAVEFILES.MAX_SAVES;
+    const maxSaves = this.config.SAVEFILES.MAX_SAVES;
     if (maxSaves <= 0) {
       return;
     }

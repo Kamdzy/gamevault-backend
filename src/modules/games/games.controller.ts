@@ -1,19 +1,26 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Headers,
   Logger,
+  MaxFileSizeValidator,
   Param,
+  ParseFilePipe,
+  Post,
   Put,
   Request,
   Res,
   StreamableFile,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConsumes,
   ApiHeader,
   ApiOkResponse,
   ApiOperation,
@@ -30,15 +37,20 @@ import {
   PaginationType,
   paginate,
 } from "nestjs-paginate";
-import { Repository } from "typeorm";
+import { In, Not, Repository } from "typeorm";
 
+import { FileInterceptor } from "@nestjs/platform-express";
+import bytes from "bytes";
 import { isArray } from "lodash";
 import { FilterSuffix } from "nestjs-paginate/lib/filter";
 import configuration from "../../configuration";
+import { DisableApiIf } from "../../decorators/disable-api-if.decorator";
 import { MinimumRole } from "../../decorators/minimum-role.decorator";
 import { PaginateQueryOptions } from "../../decorators/pagination.decorator";
 import { ApiOkResponsePaginated } from "../../globals";
 import { OtpService } from "../otp/otp.service";
+import { State } from "../progresses/models/state.enum";
+import { Progress } from "../progresses/progress.entity";
 import { GamevaultUser } from "../users/gamevault-user.entity";
 import { Role } from "../users/models/role.enum";
 import { UsersService } from "../users/users.service";
@@ -60,6 +72,8 @@ export class GamesController {
     private readonly filesService: FilesService,
     @InjectRepository(GamevaultGame)
     private readonly gamesRepository: Repository<GamevaultGame>,
+    @InjectRepository(Progress)
+    private readonly progressRepository: Repository<Progress>,
     private readonly usersService: UsersService,
     private readonly otpService: OtpService,
   ) {}
@@ -73,6 +87,68 @@ export class GamesController {
   @MinimumRole(Role.ADMIN)
   async putFilesReindex() {
     return this.filesService.indexAllFiles();
+  }
+
+  /** Deletes a game file from disk. Admins only. */
+  @Delete(":game_id")
+  @ApiOperation({
+    summary: "deletes a game file from disk",
+    description:
+      "Permanently deletes the physical game file from the filesystem. The file indexer will automatically detect the missing file and soft-delete the game from the database. Only administrators can use this endpoint. The server must have write permissions on the files volume.",
+    operationId: "deleteGame",
+  })
+  @MinimumRole(Role.ADMIN)
+  @DisableApiIf(configuration.SERVER.DEMO_MODE_ENABLED)
+  async deleteGame(@Param() params: GameIdDto): Promise<void> {
+    return this.filesService.deleteGameFile(Number(params.game_id));
+  }
+
+  /** Upload a game file to the server. */
+  @Post()
+  @ApiOperation({
+    summary: "upload a game file to the server",
+    description: `Upload a game file directly to the game library. Only administrators can use this endpoint. The file must have a supported game file format. The server must have write permissions on the files volume.`,
+    operationId: "postGameUpload",
+  })
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      properties: {
+        file: {
+          type: "string",
+          format: "binary",
+          description: "The game file to upload",
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    schema: {
+      properties: {
+        path: {
+          type: "string",
+          description: "The path where the game file was saved",
+        },
+      },
+    },
+  })
+  @UseInterceptors(FileInterceptor("file"))
+  @MinimumRole(Role.ADMIN)
+  @DisableApiIf(configuration.SERVER.DEMO_MODE_ENABLED)
+  async postGameUpload(
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({
+            maxSize: configuration.GAMES.MAX_UPLOAD_SIZE,
+            message: `File exceeds maximum allowed upload size of ${bytes(configuration.GAMES.MAX_UPLOAD_SIZE, { unit: "GB", thousandsSeparator: "." })}.`,
+          }),
+        ],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.filesService.upload(file);
   }
 
   /** Get paginated games list based on the given query parameters. */
@@ -115,27 +191,52 @@ export class GamesController {
 
     const progressStateFilter = query.filter?.["progresses.state"];
     const progressUserFilter = query.filter?.["progresses.user.id"];
+
+    // "UNPLAYED" means either:
+    //   a) The user has no progress record for this game at all, OR
+    //   b) The user has a progress record with state explicitly set to UNPLAYED.
+    //
+    // We can't use nestjs-paginate's column-level filters for this because:
+    //   1. A LEFT JOIN on progresses returns rows for ALL users' progress,
+    //      so a $null check only matches when NO user has a progress record
+    //      — not just the requesting user.
+    //   2. nestjs-paginate forces INNER JOIN on filtered relations, which
+    //      drops games with no progress rows before IS NULL can match.
+    //
+    // Instead, we pre-query the game IDs where this user has a non-UNPLAYED
+    // progress and exclude them via PaginateConfig.where.
+    let unplayedWhereCondition = undefined;
+
     if (progressStateFilter || progressUserFilter) {
-      // Support for virtual UNPLAYED state.
       if (progressStateFilter?.includes("UNPLAYED")) {
-        if (progressStateFilter && !isArray(progressStateFilter)) {
-          const rawFilterValue = progressStateFilter.split(":").pop();
-          query.filter["progresses.state"] = [
-            "$null",
-            `$or:$eq:${rawFilterValue}`,
-          ];
-        }
-
+        let userId = request.user.id;
         if (progressUserFilter && !isArray(progressUserFilter)) {
-          const rawFilterValue = progressUserFilter.split(":").pop();
-          query.filter["progresses.user.id"] = [
-            "$null",
-            `$or:$not:${rawFilterValue}`,
-          ];
+          userId = Number(progressUserFilter.split(":").pop());
         }
-      }
 
-      relations.push("progresses", "progresses.user");
+        const playedProgresses = await this.progressRepository.find({
+          where: {
+            user: { id: userId },
+            state: Not(State.UNPLAYED),
+          },
+          relations: ["game"],
+          select: { game: { id: true } },
+        });
+
+        const excludedGameIds = playedProgresses
+          .filter((p) => p.game != null)
+          .map((p) => p.game.id);
+
+        if (excludedGameIds.length > 0) {
+          unplayedWhereCondition = { id: Not(In(excludedGameIds)) };
+        }
+
+        // Remove progress filters — handled by the pre-query above
+        delete query.filter["progresses.state"];
+        delete query.filter["progresses.user.id"];
+      } else {
+        relations.push("progresses", "progresses.user");
+      }
     }
 
     if (
@@ -151,6 +252,7 @@ export class GamesController {
 
     return paginate(query, this.gamesRepository, {
       paginationType: PaginationType.TAKE_AND_SKIP,
+      where: unplayedWhereCondition,
       defaultLimit: 100,
       defaultSortBy: [["sort_title", "ASC"]],
       maxLimit: -1,
