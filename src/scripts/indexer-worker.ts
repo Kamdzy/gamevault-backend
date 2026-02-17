@@ -6,9 +6,21 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "../app.module";
 import logger from "../logging";
 import { FilesService } from "../modules/games/files.service";
+import loadPlugins from "../plugin";
 
 async function run(): Promise<void> {
   try {
+    // Load plugins into AppModule before creating the context — mirrors main.ts.
+    // Without this, plugin-registered providers (e.g. dlsite, vndb) are absent
+    // in the worker's DI container and cause ProviderNotFoundException at runtime.
+    const builtinModules = Reflect.getOwnMetadata("imports", AppModule);
+    const pluginModules = await loadPlugins();
+    Reflect.defineMetadata(
+      "imports",
+      [...builtinModules, ...pluginModules],
+      AppModule,
+    );
+
     // Create a minimal application context (no HTTP server)
     const appContext = await NestFactory.createApplicationContext(AppModule, {
       logger: false,
