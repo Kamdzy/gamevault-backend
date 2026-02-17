@@ -238,7 +238,7 @@ describe("IgdbMetadataProviderService", () => {
       expect(metadata.cover).toBeUndefined();
     });
 
-    it("should return undefined age rating if ratings cannot be mapped", async () => {
+    it("should return default age rating (7) if ratings cannot be mapped", async () => {
       const gameWithoutMappedRatings = {
         ...gamesData[0],
         age_ratings: [{ rating_category: { rating: "UNKNOWN_RATING" } }],
@@ -266,7 +266,7 @@ describe("IgdbMetadataProviderService", () => {
       }));
 
       const metadata = await service.getByProviderDataIdOrFail("101");
-      expect(metadata.age_rating).toBeUndefined();
+      expect(metadata.age_rating).toBe(7);
     });
   });
 });
