@@ -734,7 +734,7 @@ export class FilesService implements OnApplicationBootstrap {
         filename,
       });
     }
-    return this.isValidFilePath(filename) && !shouldExclude;
+    return !shouldExclude && this.isValidFilePath(filename);
   }
 
   private shouldIncludeDirectory(dirname: string): boolean {
