@@ -725,7 +725,8 @@ export class FilesService implements OnApplicationBootstrap {
   }
 
   private shouldIncludeFile(filename: string): boolean {
-    const shouldExclude = configuration.GAMES.SEARCH_EXCLUDE_FILE_REGEX?.test(filename);
+    const shouldExclude =
+      configuration.GAMES.SEARCH_EXCLUDE_FILE_REGEX?.test(filename);
     if (shouldExclude) {
       this.logger.debug({
         message: `Indexer ignoring filename due to exclusion settings.`,
@@ -737,7 +738,8 @@ export class FilesService implements OnApplicationBootstrap {
   }
 
   private shouldIncludeDirectory(dirname: string): boolean {
-    const shouldExclude = configuration.GAMES.SEARCH_EXCLUDE_DIR_REGEX?.test(dirname);
+    const shouldExclude =
+      configuration.GAMES.SEARCH_EXCLUDE_DIR_REGEX?.test(dirname);
     if (shouldExclude) {
       this.logger.debug({
         message: `Indexer ignoring dirname due to exclusion settings.`,
