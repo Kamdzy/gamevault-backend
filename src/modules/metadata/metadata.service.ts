@@ -260,7 +260,7 @@ export class MetadataService {
         });
       }
     }
-    this.merge(game.id);
+    await this.merge(game.id);
   }
 
   /**
