@@ -26,7 +26,7 @@ import { ProviderNotFoundException } from "./providers/models/provider-not-found
 @Injectable()
 export class MetadataService {
   private readonly logger = new Logger(this.constructor.name);
-  private readonly metadataJobs = new Map<number, GamevaultGame>();
+  private readonly metadataJobs = new Set<number>();
   private isProcessingQueue = false;
   providers: MetadataProvider[] = [];
 
@@ -130,7 +130,7 @@ export class MetadataService {
       return;
     }
 
-    this.metadataJobs.set(game.id, game);
+    this.metadataJobs.add(game.id);
     this.processQueue();
   }
 
@@ -142,14 +142,18 @@ export class MetadataService {
     this.isProcessingQueue = true;
 
     while (this.metadataJobs.size > 0) {
-      const [gameId, game] = this.metadataJobs.entries().next().value;
+      const gameId = this.metadataJobs.values().next().value;
 
+      let game: GamevaultGame | undefined;
       try {
+        game = await this.gamesService.findOneByGameIdOrFail(gameId, {
+          loadDeletedEntities: false,
+        });
         await this.updateMetadata(game);
       } catch (error) {
         this.logger.warn({
           message: "Error updating metadata for game.",
-          game: logGamevaultGame(game),
+          game: game ? logGamevaultGame(game) : { id: gameId },
           error,
         });
       } finally {
