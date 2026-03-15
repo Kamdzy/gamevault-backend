@@ -148,6 +148,7 @@ export class MetadataService {
       try {
         game = await this.gamesService.findOneByGameIdOrFail(gameId, {
           loadDeletedEntities: false,
+          loadRelations: ["provider_metadata"],
         });
         await this.updateMetadata(game);
       } catch (error) {
