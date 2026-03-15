@@ -264,7 +264,7 @@ export class MetadataService {
         });
       }
     }
-    await this.merge(game.id);
+    this.merge(game.id);
   }
 
   /**
