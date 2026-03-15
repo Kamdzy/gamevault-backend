@@ -64,7 +64,7 @@ export class BasicAuthController {
     });
     return this.authenticationService.login(
       request.user,
-      request.ip,
+      request.ip || request.headers["x-forwarded-for"] || "unknown",
       request.headers["user-agent"] || "unknown",
     );
   }
