@@ -60,15 +60,31 @@ export class GamesService {
       const findParameters: FindOneOptions<GamevaultGame> = {
         where: { id },
         relationLoadStrategy: "query",
-        loadEagerRelations: true,
-        relations: this.defaultRelations,
       };
+
+      if (options.loadRelations === true) {
+        findParameters.relations = this.defaultRelations;
+        findParameters.loadEagerRelations = true;
+      } else if (Array.isArray(options.loadRelations)) {
+        findParameters.relations = options.loadRelations;
+        findParameters.loadEagerRelations = false;
+      } else {
+        findParameters.loadEagerRelations = false;
+      }
+
+      if (options.select) {
+        findParameters.select =
+          options.select as FindOptionsSelect<GamevaultGame>;
+      }
 
       if (options.loadDeletedEntities) {
         findParameters.withDeleted = true;
       }
 
       if (options.filterByAge) {
+        if (!options.loadRelations) {
+          findParameters.relations = ["metadata"];
+        }
         findParameters.where = {
           id,
           metadata: {
@@ -173,6 +189,7 @@ export class GamesService {
     // Finds the game by ID
     const game = await this.findOneByGameIdOrFail(id, {
       loadDeletedEntities: true,
+      loadRelations: true,
     });
 
     if (dto.mapping_requests != null) {
@@ -388,11 +405,23 @@ export class GamesService {
       );
     }
 
+    const indexingSelect: FindOptionsSelect<GamevaultGame> = {
+      id: true,
+      file_path: true,
+      title: true,
+      release_date: true,
+      size: true,
+      version: true,
+      early_access: true,
+      deleted_at: true,
+    };
+
     const foundGame =
       (await this.gamesRepository.findOne({
         relationLoadStrategy: "query",
         where: { file_path: game.file_path },
-        relations: this.defaultRelations,
+        loadEagerRelations: false,
+        select: indexingSelect,
         withDeleted: true,
       })) ??
       (await this.gamesRepository.findOne({
@@ -401,7 +430,8 @@ export class GamesService {
           title: game.title,
           release_date: game.release_date,
         },
-        relations: this.defaultRelations,
+        loadEagerRelations: false,
+        select: indexingSelect,
         withDeleted: true,
       }));
 

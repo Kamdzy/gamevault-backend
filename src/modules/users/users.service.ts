@@ -466,6 +466,7 @@ export class UsersService implements OnApplicationBootstrap {
 
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
+      loadRelations: true,
     });
 
     await this.userRepository
@@ -499,6 +500,7 @@ export class UsersService implements OnApplicationBootstrap {
 
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
+      loadRelations: true,
     });
 
     await this.userRepository

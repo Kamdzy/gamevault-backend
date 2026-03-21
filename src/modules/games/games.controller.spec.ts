@@ -144,6 +144,7 @@ describe("GamesController", () => {
       expect(result).toEqual(mockGame);
       expect(gamesService.findOneByGameIdOrFail).toHaveBeenCalledWith(5, {
         loadDeletedEntities: true,
+        loadRelations: true,
         filterByAge: undefined,
       });
     });

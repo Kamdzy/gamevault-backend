@@ -350,6 +350,7 @@ export class GamesController {
   ): Promise<GamevaultGame> {
     return this.gamesService.findOneByGameIdOrFail(Number(params.game_id), {
       loadDeletedEntities: true,
+      loadRelations: true,
       filterByAge: await this.usersService.findUserAgeByUsername(
         request.user.username,
       ),

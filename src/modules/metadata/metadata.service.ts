@@ -121,16 +121,16 @@ export class MetadataService {
   /**
    * Checks the metadata of games and updates them if necessary.
    */
-  async addUpdateMetadataJob(game: GamevaultGame): Promise<void> {
-    if (this.metadataJobs.has(game.id)) {
+  async addUpdateMetadataJob(gameId: number): Promise<void> {
+    if (this.metadataJobs.has(gameId)) {
       this.logger.debug({
         message: "Skipping metadata job as it is already enqueued.",
-        game: logGamevaultGame(game),
+        game: { id: gameId },
       });
       return;
     }
 
-    this.metadataJobs.add(game.id);
+    this.metadataJobs.add(gameId);
     this.processQueue();
   }
 
@@ -140,6 +140,17 @@ export class MetadataService {
   private async processQueue(): Promise<void> {
     if (this.isProcessingQueue) return;
     this.isProcessingQueue = true;
+
+    const totalJobs = this.metadataJobs.size;
+    let processed = 0;
+    const heapMB = () =>
+      Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+
+    this.logger.log({
+      message: "Metadata queue started.",
+      queue_size: totalJobs,
+      heap_mb: heapMB(),
+    });
 
     while (this.metadataJobs.size > 0) {
       const gameId = this.metadataJobs.values().next().value;
@@ -159,8 +170,23 @@ export class MetadataService {
         });
       } finally {
         this.metadataJobs.delete(gameId);
+        processed++;
+        if (processed % 100 === 0) {
+          this.logger.log({
+            message: "Metadata queue progress.",
+            processed,
+            remaining: this.metadataJobs.size,
+            heap_mb: heapMB(),
+          });
+        }
       }
     }
+
+    this.logger.log({
+      message: "Metadata queue drained.",
+      total_processed: processed,
+      heap_mb: heapMB(),
+    });
 
     this.isProcessingQueue = false;
   }

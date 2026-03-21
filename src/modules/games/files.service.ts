@@ -48,6 +48,8 @@ export class FilesService implements OnApplicationBootstrap {
     configuration.GAMES.SUPPORTED_FILE_FORMATS.map((f) => toLower(f)),
   );
 
+  private isIndexingRunning = false;
+
   private readonly runDebouncedIntegrityCheck = debounce(async () => {
     await this.checkIntegrity();
   }, 5000);
@@ -108,10 +110,23 @@ export class FilesService implements OnApplicationBootstrap {
   )
   /** Scans the filesystem for all games and indexes them. */
   public async indexAllFiles() {
+    if (this.isIndexingRunning) {
+      this.logger.warn({
+        message: "Skipping file index — previous run is still in progress.",
+      });
+      return;
+    }
+
+    this.isIndexingRunning = true;
+    try {
+    const heapMB = () =>
+      Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+
     const files = await this.readAllFiles();
     this.logger.log({
       message: "Starting full file index.",
       count: files.length,
+      heap_mb: heapMB(),
     });
 
     if (files.length > 0) {
@@ -133,10 +148,19 @@ export class FilesService implements OnApplicationBootstrap {
     this.logger.log({
       message: "Finished full file index.",
       count: files.length,
+      heap_mb: heapMB(),
     });
 
     this.runDebouncedIntegrityCheck.cancel();
     await this.checkIntegrity(files);
+
+    this.logger.log({
+      message: "Post-integrity-check.",
+      heap_mb: heapMB(),
+    });
+    } finally {
+      this.isIndexingRunning = false;
+    }
   }
 
   /**
@@ -284,16 +308,15 @@ export class FilesService implements OnApplicationBootstrap {
       switch (existingGameTuple[0]) {
         case GameExistence.EXISTS: {
           // If it exists, just update the metadata
-          this.metadataService.addUpdateMetadataJob(existingGame);
+          this.metadataService.addUpdateMetadataJob(existingGame.id);
           break;
         }
 
         case GameExistence.DOES_NOT_EXIST: {
           // If it doesn't exist, detect the type and save it
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
-          this.metadataService.addUpdateMetadataJob(
-            await this.gamesService.save(gameToIndex),
-          );
+          const saved = await this.gamesService.save(gameToIndex);
+          this.metadataService.addUpdateMetadataJob(saved.id);
           break;
         }
 
@@ -301,18 +324,16 @@ export class FilesService implements OnApplicationBootstrap {
           // Restore soft-deleted game and update its information
           const restoredGame = await this.gamesService.restore(existingGame.id);
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
-          this.metadataService.addUpdateMetadataJob(
-            await this.updateFileInfo(restoredGame.id, gameToIndex),
-          );
+          const updated = await this.updateFileInfo(restoredGame.id, gameToIndex);
+          this.metadataService.addUpdateMetadataJob(updated.id);
           break;
         }
 
         case GameExistence.EXISTS_BUT_ALTERED: {
           // Update the information for an altered duplicate
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
-          this.metadataService.addUpdateMetadataJob(
-            await this.updateFileInfo(existingGame.id, gameToIndex),
-          );
+          const updated = await this.updateFileInfo(existingGame.id, gameToIndex);
+          this.metadataService.addUpdateMetadataJob(updated.id);
         }
       }
     } catch (error) {
