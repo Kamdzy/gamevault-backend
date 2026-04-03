@@ -579,6 +579,7 @@ export class MetadataService {
     // Find the game by gameId.
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
+      loadRelations: ["provider_metadata", "metadata", "user_metadata"],
     });
 
     // Clear the effective metadata.
@@ -656,7 +657,7 @@ export class MetadataService {
       // Get the game and update its metadata
       const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
         loadDeletedEntities: false,
-        loadRelations: ["provider_metadata"],
+        loadRelations: ["provider_metadata", "metadata", "user_metadata"],
       });
 
       // Only add the metadata if it's not already associated with the game
