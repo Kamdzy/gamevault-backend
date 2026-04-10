@@ -90,6 +90,8 @@ export default {
     "image/tiff", // TIFF
     "image/gif", // GIF
     "image/x-icon", // ICO
+    "image/webp", // WEBP
+    "image/avif", // AVIF
     "video/mp4", // MP4
     "video/x-msvideo", // AVI
     "video/quicktime", // MOV
