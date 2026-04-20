@@ -223,6 +223,8 @@ export class MetadataService {
       return;
     }
 
+    let metadataChanged = false;
+
     for (const provider of this.providers.filter(
       (provider) => provider.enabled,
     )) {
@@ -281,6 +283,7 @@ export class MetadataService {
           // If the existing provider metadata is not found, find the metadata.
           await this.findMetadata(game, provider);
         }
+        metadataChanged = true;
       } catch (error) {
         // If the metadata update fails, log the error and skip the update.
         this.logger.error({
@@ -291,7 +294,12 @@ export class MetadataService {
         });
       }
     }
-    this.merge(game.id);
+    // Only merge when a provider was actually updated. On re-indexes where all
+    // providers are within TTL, skipping merge here avoids thousands of
+    // concurrent fire-and-forget merge calls that would exhaust heap memory.
+    if (metadataChanged) {
+      await this.merge(game.id);
+    }
   }
 
   /**
