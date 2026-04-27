@@ -12,6 +12,7 @@ import compression from "compression";
 import cookieparser from "cookie-parser";
 import helmet from "helmet";
 import morgan from "morgan";
+import { FilesService } from "./modules/games/files.service";
 //import { AsyncApiDocumentBuilder, AsyncApiModule } from "nestjs-asyncapi";
 
 import { createHash } from "crypto";
@@ -254,6 +255,9 @@ async function bootstrap(): Promise<void> {
   // Fire-and-forget: start initial file indexing in a worker thread so it
   // cannot block the main event loop. Prefer compiled JS in dist, fallback
   // to loading ts via ts-node in dev using an eval worker.
+  // The cron re-index is gated by FilesService._initialIndexComplete, which
+  // is set when the worker exits. If no worker is spawned, mark it complete
+  // immediately so the cron can still run.
   if (!configuration.TESTING.MOCK_FILES) {
     try {
       const compiledWorker = path.join(
@@ -293,6 +297,12 @@ async function bootstrap(): Promise<void> {
             context: "Initialization",
             message: `Indexer worker exited with code ${code}`,
           });
+          try {
+            const filesService = app.get(FilesService);
+            filesService.markInitialIndexComplete();
+          } catch {
+            // App may have shut down before the worker exited
+          }
         });
         logger.log({
           context: "Initialization",
@@ -305,7 +315,10 @@ async function bootstrap(): Promise<void> {
         message: "Failed to spawn indexer worker.",
         error,
       });
+      app.get(FilesService).markInitialIndexComplete();
     }
+  } else {
+    app.get(FilesService).markInitialIndexComplete();
   }
 }
 

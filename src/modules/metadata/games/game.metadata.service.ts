@@ -92,6 +92,8 @@ export class GameMetadataService {
         provider_slug: game.provider_slug,
         provider_data_id: game.provider_data_id,
       },
+      select: ["id"],
+      loadEagerRelations: false,
       relationLoadStrategy: "query",
     });
 

@@ -49,6 +49,19 @@ export class FilesService implements OnApplicationBootstrap {
   );
 
   private isIndexingRunning = false;
+  private _initialIndexComplete = false;
+
+  public get initialIndexComplete(): boolean {
+    return this._initialIndexComplete;
+  }
+
+  public markInitialIndexComplete(): void {
+    this._initialIndexComplete = true;
+    this.logger.log({
+      message:
+        "Initial worker indexing complete — cron re-indexes are now enabled.",
+    });
+  }
 
   private readonly runDebouncedIntegrityCheck = debounce(async () => {
     await this.checkIntegrity();
@@ -110,6 +123,14 @@ export class FilesService implements OnApplicationBootstrap {
   )
   /** Scans the filesystem for all games and indexes them. */
   public async indexAllFiles() {
+    if (!this._initialIndexComplete) {
+      this.logger.debug({
+        message:
+          "Skipping cron re-index — initial worker indexing not yet complete.",
+      });
+      return;
+    }
+
     if (this.isIndexingRunning) {
       this.logger.warn({
         message: "Skipping file index — previous run is still in progress.",
