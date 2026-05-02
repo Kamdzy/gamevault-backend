@@ -118,6 +118,8 @@ export class GamesService {
         findParameters.relations = this.defaultRelations;
       } else if (Array.isArray(options.loadRelations))
         findParameters.relations = options.loadRelations;
+    } else {
+      findParameters.loadEagerRelations = false;
     }
 
     if (options.loadDeletedEntities) {

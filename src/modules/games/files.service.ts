@@ -140,45 +140,54 @@ export class FilesService implements OnApplicationBootstrap {
 
     this.isIndexingRunning = true;
     try {
-    const heapMB = () =>
-      Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+      const heapMB = () =>
+        Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
 
-    const files = await this.readAllFiles();
-    this.logger.log({
-      message: "Starting full file index.",
-      count: files.length,
-      heap_mb: heapMB(),
-    });
+      this.logger.log({
+        message: "Index: before readAllFiles.",
+        heap_mb: heapMB(),
+      });
 
-    if (files.length > 0) {
-      // Processes up to INDEX_CONCURRENCY files in parallel.
-      // To revert to sequential (one file at a time), replace mergeMap with
-      // concatMap and remove the second argument:
-      //   concatMap((file) => this.index(file.path, { size: Number(file.size) } as Stats, true))
-      await lastValueFrom(
-        from(files).pipe(
-          mergeMap(
-            (file) =>
-              this.index(file.path, { size: Number(file.size) } as Stats, true),
-            configuration.GAMES.INDEX_CONCURRENCY,
+      const files = await this.readAllFiles();
+      this.logger.log({
+        message: "Index: after readAllFiles, starting file index.",
+        count: files.length,
+        heap_mb: heapMB(),
+      });
+
+      if (files.length > 0) {
+        // Processes up to INDEX_CONCURRENCY files in parallel.
+        // To revert to sequential (one file at a time), replace mergeMap with
+        // concatMap and remove the second argument:
+        //   concatMap((file) => this.index(file.path, { size: Number(file.size) } as Stats, true))
+        await lastValueFrom(
+          from(files).pipe(
+            mergeMap(
+              (file) =>
+                this.index(
+                  file.path,
+                  { size: Number(file.size) } as Stats,
+                  true,
+                ),
+              configuration.GAMES.INDEX_CONCURRENCY,
+            ),
           ),
-        ),
-      );
-    }
+        );
+      }
 
-    this.logger.log({
-      message: "Finished full file index.",
-      count: files.length,
-      heap_mb: heapMB(),
-    });
+      this.logger.log({
+        message: "Index: finished file index, starting integrity check.",
+        count: files.length,
+        heap_mb: heapMB(),
+      });
 
-    this.runDebouncedIntegrityCheck.cancel();
-    await this.checkIntegrity(files);
+      this.runDebouncedIntegrityCheck.cancel();
+      await this.checkIntegrity(files);
 
-    this.logger.log({
-      message: "Post-integrity-check.",
-      heap_mb: heapMB(),
-    });
+      this.logger.log({
+        message: "Index: post-integrity-check, indexing complete.",
+        heap_mb: heapMB(),
+      });
     } finally {
       this.isIndexingRunning = false;
     }
@@ -345,7 +354,10 @@ export class FilesService implements OnApplicationBootstrap {
           // Restore soft-deleted game and update its information
           const restoredGame = await this.gamesService.restore(existingGame.id);
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
-          const updated = await this.updateFileInfo(restoredGame.id, gameToIndex);
+          const updated = await this.updateFileInfo(
+            restoredGame.id,
+            gameToIndex,
+          );
           this.metadataService.addUpdateMetadataJob(updated.id);
           break;
         }
@@ -353,7 +365,10 @@ export class FilesService implements OnApplicationBootstrap {
         case GameExistence.EXISTS_BUT_ALTERED: {
           // Update the information for an altered duplicate
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
-          const updated = await this.updateFileInfo(existingGame.id, gameToIndex);
+          const updated = await this.updateFileInfo(
+            existingGame.id,
+            gameToIndex,
+          );
           this.metadataService.addUpdateMetadataJob(updated.id);
         }
       }
@@ -725,11 +740,23 @@ export class FilesService implements OnApplicationBootstrap {
   private async checkIntegrity(
     filesInFileSystem?: File[],
   ): Promise<GamevaultGame[]> {
+    const heapMB = () =>
+      Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+
     const gamesInFileSystem = filesInFileSystem || (await this.readAllFiles());
+
+    const heapBeforeFind = heapMB();
     const gamesInDatabase = await this.gamesService.find({
       loadDeletedEntities: false,
       loadRelations: false,
       select: ["id", "file_path"],
+    });
+    this.logger.log({
+      message: "Integrity: loaded games from DB.",
+      count: gamesInDatabase.length,
+      heap_before_find: heapBeforeFind,
+      heap_after_find: heapMB(),
+      delta: heapMB() - heapBeforeFind,
     });
 
     if (configuration.TESTING.MOCK_FILES) {
@@ -746,11 +773,14 @@ export class FilesService implements OnApplicationBootstrap {
 
     const fsPaths = new Set(gamesInFileSystem.map((f) => f.path));
     const checkedGames: GamevaultGame[] = [];
+    let deletedCount = 0;
     for (const gameInDatabase of gamesInDatabase) {
       try {
         // If game is not in file system, mark it as deleted
         if (!fsPaths.has(gameInDatabase.file_path)) {
+          const heapBeforeDelete = heapMB();
           await this.gamesService.delete(gameInDatabase.id);
+          deletedCount++;
           this.logger.log({
             message: `Game marked as soft-deleted.`,
             reason: "Game file not found in filesystem.",
@@ -758,6 +788,10 @@ export class FilesService implements OnApplicationBootstrap {
               id: gameInDatabase.id,
               path: gameInDatabase.file_path,
             },
+            heap_before_delete: heapBeforeDelete,
+            heap_after_delete: heapMB(),
+            delta: heapMB() - heapBeforeDelete,
+            deleted_so_far: deletedCount,
           });
           continue;
         }
@@ -776,6 +810,8 @@ export class FilesService implements OnApplicationBootstrap {
     this.logger.log({
       message: "Finished Game Integrity Check.",
       count: gamesInDatabase.length,
+      deleted: deletedCount,
+      heap_mb: heapMB(),
     });
     return checkedGames;
   }

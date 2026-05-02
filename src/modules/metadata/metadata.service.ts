@@ -154,6 +154,7 @@ export class MetadataService {
 
     while (this.metadataJobs.size > 0) {
       const gameId = this.metadataJobs.values().next().value;
+      const heapBefore = heapMB();
 
       let game: GamevaultGame | undefined;
       try {
@@ -161,7 +162,19 @@ export class MetadataService {
           loadDeletedEntities: false,
           loadRelations: ["provider_metadata"],
         });
+        const heapAfterLoad = heapMB();
         await this.updateMetadata(game);
+        const heapAfterUpdate = heapMB();
+
+        this.logger.log({
+          message: "Metadata: game processed.",
+          game: { id: gameId },
+          heap_before: heapBefore,
+          heap_after_load: heapAfterLoad,
+          heap_after_update: heapAfterUpdate,
+          delta_load: heapAfterLoad - heapBefore,
+          delta_total: heapAfterUpdate - heapBefore,
+        });
       } catch (error) {
         this.logger.warn({
           message: "Error updating metadata for game.",
@@ -298,7 +311,17 @@ export class MetadataService {
     // providers are within TTL, skipping merge here avoids thousands of
     // concurrent fire-and-forget merge calls that would exhaust heap memory.
     if (metadataChanged) {
+      const heapMB = () =>
+        Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+      const heapBefore = heapMB();
       await this.merge(game.id);
+      this.logger.log({
+        message: "Metadata: merge completed.",
+        game: { id: game.id },
+        heap_before_merge: heapBefore,
+        heap_after_merge: heapMB(),
+        delta: heapMB() - heapBefore,
+      });
     }
   }
 
@@ -376,9 +399,22 @@ export class MetadataService {
    * - Always merges when user_metadata exists (user explicitly requested changes)
    */
   async merge(gameId: number): Promise<GamevaultGame> {
+    const heapMB = () =>
+      Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    const heapBefore = heapMB();
+
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
       loadRelations: ["metadata", "provider_metadata", "user_metadata"],
+    });
+
+    this.logger.log({
+      message: "Metadata: merge loaded game with relations.",
+      game: { id: gameId },
+      heap_before: heapBefore,
+      heap_after_load: heapMB(),
+      delta: heapMB() - heapBefore,
+      provider_metadata_count: game.provider_metadata?.length ?? 0,
     });
 
     // SAFEGUARD: Nothing to merge
@@ -584,10 +620,22 @@ export class MetadataService {
    * Removes metadata from the game. Does not remove user provided metadata.
    */
   async unmap(gameId: number, providerSlug: string) {
+    const heapMB = () =>
+      Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    const heapBefore = heapMB();
+
     // Find the game by gameId.
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
       loadRelations: ["provider_metadata", "metadata", "user_metadata"],
+    });
+
+    this.logger.log({
+      message: "Metadata: unmap loaded game with relations.",
+      game: { id: gameId },
+      heap_before: heapBefore,
+      heap_after_load: heapMB(),
+      delta: heapMB() - heapBefore,
     });
 
     // Clear the effective metadata.
