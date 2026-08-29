@@ -5,6 +5,9 @@ const config: Config = {
   roots: ["src", ".local/plugins"],
   setupFiles: ["./src/testing/setup-jest.ts"],
   testRegex: ".*\\.spec\\.ts$",
+  // Suites that boot a full Nest app (status.e2e) exceed jest's 5s default
+  // under parallel load — it is a bootstrap cost, not a slow assertion.
+  testTimeout: 30000,
   transform: {
     ".+\\.ts$": "ts-jest",
   },
