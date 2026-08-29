@@ -39,14 +39,7 @@ async function run(): Promise<void> {
     logger.log({ context: "Indexer", message: "Indexer (worker) started." });
 
     try {
-      if (typeof filesService.indexAllFiles === "function") {
-        await filesService.indexAllFiles();
-      } else {
-        // Fallback to startIndexing if present (startIndexing may schedule work)
-        if (typeof (filesService as any).startIndexing === "function") {
-          await (filesService as any).indexAllFiles();
-        }
-      }
+      await filesService.indexAllFiles();
       logger.log({ context: "Indexer", message: "Indexer (worker) finished." });
     } catch (err) {
       logger.error({
