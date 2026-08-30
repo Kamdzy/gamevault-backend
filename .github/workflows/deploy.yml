@@ -192,7 +192,7 @@ jobs:
 
           case "$BRANCH" in
             master|hotfix)
-              push_manifest "ghcr.io/kamdzy/gamevault-backend" "latest ${RELEASE_TAG}"
+              push_manifest "ghcr.io/kamdzy/gamevault-backend" "latest latest-1 ${RELEASE_TAG}"
               ;;
             develop)
               push_manifest "ghcr.io/kamdzy/gamevault-backend" "unstable"
