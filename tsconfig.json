@@ -13,6 +13,12 @@
     "target": "esnext",
     "sourceMap": true,
     "outDir": "./dist",
+    "baseUrl": "./",
+    // TS 6 deprecates baseUrl (removed in TS 7). Kept anyway so plugin
+    // imports of the form `src/modules/...` continue to resolve — every
+    // Kamdzy plugin depends on this. Revisit when TS 7 lands, either by
+    // rewriting plugin imports to relative paths or via a `paths` mapping.
+    "ignoreDeprecations": "6.0",
     "incremental": true,
     "skipLibCheck": true,
     "strict": true,
