@@ -476,6 +476,112 @@ describe("Fork delta: cascade-sensitive relations are loaded before saving", () 
   });
 });
 
+/**
+ * `GameMetadata` declares cover / background / publishers / developers /
+ * tags / genres as `eager: true`. Pre-v17 the fork relied on TypeORM 0.3.x
+ * lazily honoring `loadEagerRelations: false` and still loading those child
+ * eagers when the parent load named `metadata` / `provider_metadata` /
+ * `user_metadata`. The v17 upstream merge (21da181) bumped TypeORM to 1.0,
+ * which strictly propagates the flag. Recache builds the merged row by
+ * spreading provider/user metadata and running `stripEmptyFields` — undefined
+ * cover/background get stripped, the INSERT writes cover_id/background_id
+ * NULL, and box art disappears.
+ *
+ * The fix explicitly names the child paths in the recache loads. These tests
+ * fail if any of `map`/`unmap`/`merge` regresses to a bare parent list.
+ * Mutation-verified: replacing CASCADE_SAFE_METADATA_RELATIONS with the
+ * pre-fix `["metadata","provider_metadata","user_metadata"]` array in
+ * metadata.service.ts makes all three tests fail.
+ */
+describe("Fork delta: recache loads nested eager children explicitly (TypeORM 1.0)", () => {
+  let service: MetadataService;
+  let gamesService: any;
+
+  beforeEach(() => {
+    gamesService = {
+      findOneByGameIdOrFail: jest.fn().mockResolvedValue({
+        id: 1,
+        provider_metadata: [],
+        user_metadata: null,
+        metadata: null,
+      }),
+      save: jest.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: jest.fn().mockReturnValue("sort-title"),
+    };
+    service = new MetadataService(
+      gamesService,
+      {
+        save: jest.fn().mockImplementation((m) => Promise.resolve(m)),
+        deleteByGameMetadataIdOrFail: jest.fn().mockResolvedValue(undefined),
+      } as any,
+      jest.requireMock("./configuration").default,
+    );
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  const EAGER_CHILDREN = [
+    "cover",
+    "background",
+    "publishers",
+    "developers",
+    "tags",
+    "genres",
+  ] as const;
+  const EAGER_PARENTS = [
+    "metadata",
+    "provider_metadata",
+    "user_metadata",
+  ] as const;
+  const REQUIRED_SUB_RELATIONS = EAGER_PARENTS.flatMap((parent) =>
+    EAGER_CHILDREN.map((child) => `${parent}.${child}`),
+  );
+
+  it("merge() loads every eager child of metadata/provider_metadata/user_metadata", async () => {
+    await service.merge(1);
+
+    const call = gamesService.findOneByGameIdOrFail.mock.calls[0];
+    expect(call[1].loadRelations).toEqual(
+      expect.arrayContaining(REQUIRED_SUB_RELATIONS),
+    );
+  });
+
+  it("unmap() loads every eager child of metadata/provider_metadata/user_metadata", async () => {
+    await service.unmap(1, "igdb");
+
+    const call = gamesService.findOneByGameIdOrFail.mock.calls[0];
+    expect(call[1].loadRelations).toEqual(
+      expect.arrayContaining(REQUIRED_SUB_RELATIONS),
+    );
+  });
+
+  it("map() loads every eager child on both its own load and the unmap() reload", async () => {
+    service.registerProvider(
+      createMockProvider({
+        slug: "igdb",
+        priority: 10,
+        getByProviderDataIdOrFail: jest
+          .fn()
+          .mockResolvedValue({ provider_slug: "igdb", provider_data_id: "x" }),
+      }),
+    );
+
+    await service.map(1, "igdb", "x");
+
+    const loads = gamesService.findOneByGameIdOrFail.mock.calls.filter(
+      ([, options]: [number, any]) =>
+        Array.isArray(options?.loadRelations) &&
+        options.loadRelations.includes("provider_metadata"),
+    );
+    expect(loads.length).toBeGreaterThanOrEqual(2);
+    for (const [, options] of loads) {
+      expect(options.loadRelations).toEqual(
+        expect.arrayContaining(REQUIRED_SUB_RELATIONS),
+      );
+    }
+  });
+});
+
 describe("Fork delta: relation loading is opt-in", () => {
   let service: GamesService;
   let gamesRepository: any;

@@ -24,6 +24,36 @@ import { MinimalGameMetadataDto } from "./games/minimal-game.metadata.dto";
 import { MetadataProvider } from "./providers/abstract.metadata-provider.service";
 import { ProviderNotFoundException } from "./providers/models/provider-not-found.exception";
 
+/**
+ * GameMetadata declares cover/background/publishers/developers/tags/genres as
+ * `eager: true`. TypeORM 0.3.x lazily honoured `loadEagerRelations: false` and
+ * still loaded child eagers when the parent load named a top-level relation;
+ * TypeORM 1.0 (arrived with the v17 upstream merge, 21da181) tightened this
+ * and strictly propagates the flag. Recache paths that rebuild the merged
+ * `game.metadata` from `provider_metadata` / `user_metadata` therefore need
+ * these children named explicitly — otherwise the source rows arrive with
+ * cover/background undefined, `stripEmptyFields` drops them, and the fresh
+ * merged row is INSERTed with cover_id/background_id NULL. That was the
+ * post-v17 regression where "Recache Game" wiped box art and background.
+ *
+ * Only these per-request paths use the expanded list. The heap-critical
+ * indexing paths (`processQueue`, `checkIfExistsInDatabase`) still narrow
+ * relations tightly — the OOM defense stays intact.
+ */
+const CASCADE_SAFE_METADATA_RELATIONS: string[] = [
+  "metadata",
+  "provider_metadata",
+  "user_metadata",
+].flatMap((parent) => [
+  parent,
+  `${parent}.cover`,
+  `${parent}.background`,
+  `${parent}.publishers`,
+  `${parent}.developers`,
+  `${parent}.tags`,
+  `${parent}.genres`,
+]);
+
 @Injectable()
 export class MetadataService {
   private readonly logger = new Logger(this.constructor.name);
@@ -414,7 +444,7 @@ export class MetadataService {
 
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
-      loadRelations: ["metadata", "provider_metadata", "user_metadata"],
+      loadRelations: CASCADE_SAFE_METADATA_RELATIONS,
     });
     const { mergeableProviderMetadata, removedInvalidProviderMetadata } =
       this.getMergeableProviderMetadata(game);
@@ -720,7 +750,7 @@ export class MetadataService {
     // Find the game by gameId.
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
-      loadRelations: ["provider_metadata", "metadata", "user_metadata"],
+      loadRelations: CASCADE_SAFE_METADATA_RELATIONS,
     });
 
     this.logger.log({
@@ -806,7 +836,7 @@ export class MetadataService {
       // Get the game and update its metadata
       const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
         loadDeletedEntities: false,
-        loadRelations: ["provider_metadata", "metadata", "user_metadata"],
+        loadRelations: CASCADE_SAFE_METADATA_RELATIONS,
       });
 
       // Only add the metadata if it's not already associated with the game
