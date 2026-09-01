@@ -42,3 +42,5 @@ lerna-debug.log*
 *.sqlite
 
 __pycache__/
+other-repos/
+.serena/
