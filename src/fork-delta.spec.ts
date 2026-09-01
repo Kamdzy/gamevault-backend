@@ -667,3 +667,76 @@ describe("Fork delta: relation loading is opt-in", () => {
     expect(relationPaths(args.relations)).toEqual(["provider_metadata"]);
   });
 });
+
+/**
+ * `AuthenticationStrategy.validate()` runs on every JWT-authenticated
+ * request. Upstream does two sequential DB user lookups per call, so a
+ * Postgres blip (checkpoint stall, dropped pool connection) that lasts a
+ * few hundred ms produces a burst of 401s and clients flip to offline mode.
+ * The fork caches the resolved user for a short TTL so bursts share one
+ * lookup and transient DB unavailability doesn't shred auth.
+ *
+ * Mutation-verified: reverting validate() to always hit UsersService makes
+ * the coalesce-within-TTL test fail.
+ */
+describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
+  let usersService: {
+    findUserForAuthOrFail: jest.Mock;
+    findOneByUsernameOrFail: jest.Mock;
+  };
+  let strategy: any;
+  const payload = {
+    sub: "1",
+    preferred_username: "u",
+    email: "u@example.com",
+  };
+
+  beforeEach(() => {
+    usersService = {
+      findUserForAuthOrFail: jest.fn().mockResolvedValue({ username: "u" }),
+      findOneByUsernameOrFail: jest
+        .fn()
+        .mockResolvedValue({ id: 1, username: "u" }),
+    };
+    const { AuthenticationStrategy } = jest.requireActual<{
+      AuthenticationStrategy: new (svc: unknown, cfg: unknown) => unknown;
+    }>("./modules/auth/strategies/authentication.strategy");
+    strategy = new AuthenticationStrategy(usersService as unknown, {
+      AUTH: { ACCESS_TOKEN: { SECRET: "test-secret" } },
+    });
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it("coalesces repeated validate() calls with the same payload into one DB round-trip", async () => {
+    await strategy.validate({ payload });
+    await strategy.validate({ payload });
+    await strategy.validate({ payload });
+
+    expect(usersService.findUserForAuthOrFail).toHaveBeenCalledTimes(1);
+    expect(usersService.findOneByUsernameOrFail).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-fetches after the cache TTL expires", async () => {
+    jest.useFakeTimers({ now: Date.now() });
+
+    try {
+      await strategy.validate({ payload });
+      jest.setSystemTime(Date.now() + 61_000); // > 60s TTL
+      await strategy.validate({ payload });
+
+      expect(usersService.findUserForAuthOrFail).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not share cache slots across distinct payloads (impersonation-safe)", async () => {
+    await strategy.validate({ payload });
+    await strategy.validate({
+      payload: { ...payload, email: "other@example.com" },
+    });
+
+    expect(usersService.findUserForAuthOrFail).toHaveBeenCalledTimes(2);
+  });
+});
