@@ -1,8 +1,8 @@
 import { Injectable, Optional } from "@nestjs/common";
 
-import { ServerService } from "../server/server.service";
-import { StatusEnum } from "./models/status.enum";
-import { Status, StatusEntry } from "./models/status.model";
+import { ServerService } from "../server/server.service.js";
+import { StatusEnum } from "./models/status.enum.js";
+import { Status, StatusEntry } from "./models/status.model.js";
 
 @Injectable()
 export class StatusService {
@@ -18,7 +18,7 @@ export class StatusService {
   getExtensive(): Status {
     this.currentStatus = new Status(
       this.epoch,
-      [...this.currentStatus.protocol],
+      [...(this.currentStatus.protocol ?? [])],
       this.serverService?.getServerUuid(),
     );
     return this.currentStatus;
@@ -34,6 +34,6 @@ export class StatusService {
 
   set(status: StatusEnum, reason: string) {
     this.currentStatus.status = status;
-    this.currentStatus.protocol.push(new StatusEntry(status, reason));
+    (this.currentStatus.protocol ??= []).push(new StatusEntry(status, reason));
   }
 }

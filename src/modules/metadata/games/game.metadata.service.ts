@@ -1,22 +1,22 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { type DeepPartial, Repository } from "typeorm";
 
 import {
-  FindOptions,
+  type FindOptions,
   toFindOptionsRelations,
   toFindOptionsSelect,
-} from "../../../globals";
-import logger from "../../../logging";
-import { DeveloperMetadata } from "../developers/developer.metadata.entity";
-import { DeveloperMetadataService } from "../developers/developer.metadata.service";
-import { GenreMetadata } from "../genres/genre.metadata.entity";
-import { GenreMetadataService } from "../genres/genre.metadata.service";
-import { PublisherMetadata } from "../publishers/publisher.metadata.entity";
-import { PublisherMetadataService } from "../publishers/publisher.metadata.service";
-import { TagMetadata } from "../tags/tag.metadata.entity";
-import { TagMetadataService } from "../tags/tag.metadata.service";
-import { GameMetadata } from "./game.metadata.entity";
+} from "../../../globals.js";
+import logger from "../../../logging.js";
+import { DeveloperMetadata } from "../developers/developer.metadata.entity.js";
+import { DeveloperMetadataService } from "../developers/developer.metadata.service.js";
+import { GenreMetadata } from "../genres/genre.metadata.entity.js";
+import { GenreMetadataService } from "../genres/genre.metadata.service.js";
+import { PublisherMetadata } from "../publishers/publisher.metadata.entity.js";
+import { PublisherMetadataService } from "../publishers/publisher.metadata.service.js";
+import { TagMetadata } from "../tags/tag.metadata.entity.js";
+import { TagMetadataService } from "../tags/tag.metadata.service.js";
+import { GameMetadata } from "./game.metadata.entity.js";
 
 @Injectable()
 export class GameMetadataService {
@@ -101,18 +101,24 @@ export class GameMetadataService {
    * exists, it updates its properties with the ones from the provided
    * metadata. Otherwise, it creates a new GameMetadata entity.
    */
-  async save(game: GameMetadata): Promise<GameMetadata> {
+  async save(game: DeepPartial<GameMetadata>): Promise<GameMetadata> {
     const existingMetadata = await this.gameMetadataRepository.findOne({
       where: {
         provider_slug: game.provider_slug,
         provider_data_id: game.provider_data_id,
       },
+      // Fork (653525c): this is an existence check — it only needs to know
+      // whether a row exists and what its id is. Without these two lines
+      // TypeORM hydrates the full GameMetadata graph (developers, publishers,
+      // genres, tags, cover + background Media) on every call, and save() runs
+      // once per provider per game. That allocation churn was a major
+      // contributor to the indexing OOM.
       select: toFindOptionsSelect<GameMetadata>(["id"]),
       loadEagerRelations: false,
       relationLoadStrategy: "query",
     });
 
-    const upsertedGame: Required<GameMetadata> = {
+    const upsertedGame: DeepPartial<GameMetadata> = {
       id: existingMetadata?.id,
       created_at: undefined,
       updated_at: undefined,
@@ -142,10 +148,10 @@ export class GameMetadataService {
       installer_executable: game.installer_executable,
       uninstaller_parameters: game.uninstaller_parameters,
       uninstaller_executable: game.uninstaller_executable,
-      publishers: null,
-      developers: null,
-      tags: null,
-      genres: null,
+      publishers: [],
+      developers: [],
+      tags: [],
+      genres: [],
     };
 
     if (game.developers?.length) {
@@ -161,7 +167,9 @@ export class GameMetadataService {
             )
           ) {
             upsertedDevelopers.push(
-              await this.developerMetadataService.save(developer),
+              await this.developerMetadataService.save(
+                developer as DeveloperMetadata,
+              ),
             );
           }
         } catch (error) {
@@ -188,7 +196,9 @@ export class GameMetadataService {
             )
           ) {
             upsertedPublishers.push(
-              await this.publisherMetadataService.save(publisher),
+              await this.publisherMetadataService.save(
+                publisher as PublisherMetadata,
+              ),
             );
           }
         } catch (error) {
@@ -213,7 +223,9 @@ export class GameMetadataService {
                 upsertedTag.provider_data_id === tag.provider_data_id,
             )
           ) {
-            upsertedTags.push(await this.tagMetadataService.save(tag));
+            upsertedTags.push(
+              await this.tagMetadataService.save(tag as TagMetadata),
+            );
           }
         } catch (error) {
           logger.error({
@@ -237,7 +249,9 @@ export class GameMetadataService {
                 upsertedGenre.provider_data_id === genre.provider_data_id,
             )
           ) {
-            upsertedGenres.push(await this.genreMetadataService.save(genre));
+            upsertedGenres.push(
+              await this.genreMetadataService.save(genre as GenreMetadata),
+            );
           }
         } catch (error) {
           logger.error({
@@ -250,7 +264,7 @@ export class GameMetadataService {
       upsertedGame.genres = upsertedGenres;
     }
 
-    logger.debug({
+    logger.debug?.({
       message: `Saving game metadata`,
       game: upsertedGame,
       already_exists: !!existingMetadata,

@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
-import { GamevaultUser } from "./gamevault-user.entity";
+import { GamevaultUser } from "./gamevault-user.entity.js";
 
 @Injectable()
 export class ApiKeyService {
@@ -27,6 +27,6 @@ export class ApiKeyService {
       relationLoadStrategy: "query",
     });
 
-    return user.api_key;
+    return user.api_key ?? "";
   }
 }

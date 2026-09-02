@@ -1,12 +1,12 @@
 import {
   registerDecorator,
-  ValidationArguments,
-  ValidationOptions,
+  type ValidationArguments,
+  type ValidationOptions,
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from "class-validator";
 
-import { Media } from "../modules/media/media.entity";
+import { Media } from "../modules/media/media.entity.js";
 
 @ValidatorConstraint({ async: false })
 class MediaMimeTypeConstraint implements ValidatorConstraintInterface {

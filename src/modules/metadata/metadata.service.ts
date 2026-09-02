@@ -8,37 +8,38 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { validateOrReject } from "class-validator";
-
-import { kebabCase } from "lodash";
+import lodash from "lodash";
 import { setTimeout } from "timers/promises";
-import { AppConfiguration } from "../../configuration";
-import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
-import globals from "../../globals";
-import { logGamevaultGame, logMetadataProvider } from "../../logging";
-import { GamesService } from "../games/games.service";
-import { GamevaultGame } from "../games/gamevault-game.entity";
-import { GameType } from "../games/models/game-type.enum";
-import { GameMetadata } from "./games/game.metadata.entity";
-import { GameMetadataService } from "./games/game.metadata.service";
-import { MinimalGameMetadataDto } from "./games/minimal-game.metadata.dto";
-import { MetadataProvider } from "./providers/abstract.metadata-provider.service";
-import { ProviderNotFoundException } from "./providers/models/provider-not-found.exception";
+import type { AppConfiguration } from "../../configuration.js";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator.js";
+import globals from "../../globals.js";
+import { logGamevaultGame, logMetadataProvider } from "../../logging.js";
+import { GamesService } from "../games/games.service.js";
+import { GamevaultGame } from "../games/gamevault-game.entity.js";
+import { GameType } from "../games/models/game-type.enum.js";
+import { GameMetadata } from "./games/game.metadata.entity.js";
+import { GameMetadataService } from "./games/game.metadata.service.js";
+import { type MinimalGameMetadataDto } from "./games/minimal-game.metadata.dto.js";
+import { type MetadataProvider } from "./providers/abstract.metadata-provider.service.js";
+import { ProviderNotFoundException } from "./providers/models/provider-not-found.exception.js";
+
+const { kebabCase } = lodash;
 
 /**
- * GameMetadata declares cover/background/publishers/developers/tags/genres as
- * `eager: true`. TypeORM 0.3.x lazily honoured `loadEagerRelations: false` and
- * still loaded child eagers when the parent load named a top-level relation;
- * TypeORM 1.0 (arrived with the v17 upstream merge, 21da181) tightened this
- * and strictly propagates the flag. Recache paths that rebuild the merged
- * `game.metadata` from `provider_metadata` / `user_metadata` therefore need
- * these children named explicitly — otherwise the source rows arrive with
- * cover/background undefined, `stripEmptyFields` drops them, and the fresh
- * merged row is INSERTed with cover_id/background_id NULL. That was the
- * post-v17 regression where "Recache Game" wiped box art and background.
+ * Fork (7fb515b): GameMetadata declares cover/background/publishers/developers/
+ * tags/genres as `eager: true`. TypeORM 0.3.x loosely honoured
+ * `loadEagerRelations: false` and still loaded child eagers when the parent load
+ * named a top-level relation; TypeORM 1.0 (arrived with the v17 upstream merge)
+ * strictly propagates the flag. Recache paths that rebuild the merged
+ * `game.metadata` from `provider_metadata` / `user_metadata` therefore need these
+ * children named explicitly — otherwise the source rows arrive with
+ * cover/background undefined, `stripEmptyFields` drops them, and the fresh merged
+ * row is INSERTed with cover_id/background_id NULL. That was the post-v17
+ * regression where "Recache Game" wiped box art and background.
  *
- * Only these per-request paths use the expanded list. The heap-critical
- * indexing paths (`processQueue`, `checkIfExistsInDatabase`) still narrow
- * relations tightly — the OOM defense stays intact.
+ * Only these per-request paths use the expanded list. The heap-critical indexing
+ * paths (processQueue, checkIfExistsInDatabase) still narrow relations tightly —
+ * the OOM defence stays intact.
  */
 const CASCADE_SAFE_METADATA_RELATIONS: string[] = [
   "metadata",
@@ -57,13 +58,16 @@ const CASCADE_SAFE_METADATA_RELATIONS: string[] = [
 @Injectable()
 export class MetadataService {
   private readonly logger = new Logger(this.constructor.name);
+  // Fork (2d99061): IDs only. Holding GamevaultGame entities pinned
+  // thousands of fully-hydrated games in heap during a full re-index.
   private readonly metadataJobs = new Set<number>();
   private isProcessingQueue = false;
   providers: MetadataProvider[] = [];
 
   constructor(
     @Inject(forwardRef(() => GamesService))
-    private readonly gamesService: GamesService,
+    // Cyclic service reference (ESM): intentionally loosely typed to avoid design:paramtypes TDZ
+    private readonly gamesService: any,
     private readonly gameMetadataService: GameMetadataService,
     @InjectGamevaultConfig() private readonly config: AppConfiguration,
   ) {}
@@ -137,8 +141,12 @@ export class MetadataService {
   }
 
   /**
-   * Checks if a provider has negative priority for a game.
-   * Considers both the global provider priority and per-game provider_priority override.
+   * Checks the metadata of games and updates them if necessary.
+   */
+  /**
+   * Fork (1cb344d): resolves a provider's EFFECTIVE priority for a game —
+   * the per-game provider_priority override if set, else the global priority.
+   * Negative means "disabled for this game".
    */
   private hasNegativePriority(
     providerSlug: string,
@@ -149,9 +157,6 @@ export class MetadataService {
     return effectivePriority < 0;
   }
 
-  /**
-   * Checks the metadata of games and updates them if necessary.
-   */
   async addUpdateMetadataJob(gameId: number): Promise<void> {
     if (this.metadataJobs.has(gameId)) {
       this.logger.debug({
@@ -184,14 +189,18 @@ export class MetadataService {
     });
 
     while (this.metadataJobs.size > 0) {
-      const gameId = this.metadataJobs.values().next().value;
+      const gameId = this.metadataJobs.values().next().value as number;
       const heapBefore = heapMB();
 
       let game: GamevaultGame | undefined;
       try {
+        // Fork (3828cc8): load the game here, with the narrowest relation set
+        // the work actually needs. "versions" is included because it is eager
+        // on the entity and updateMetadata() reads game.versions for the (NC)
+        // skip check — with loadEagerRelations off it would arrive undefined.
         game = await this.gamesService.findOneByGameIdOrFail(gameId, {
           loadDeletedEntities: false,
-          loadRelations: ["provider_metadata"],
+          loadRelations: ["provider_metadata", "versions"],
         });
         const heapAfterLoad = heapMB();
         await this.updateMetadata(game);
@@ -207,6 +216,9 @@ export class MetadataService {
           delta_total: heapAfterUpdate - heapBefore,
         });
       } catch (error) {
+        // Known race: the integrity check can soft-delete a game between
+        // enqueue and fetch, producing EntityNotFoundError. Per-game catch
+        // keeps that from killing the whole queue.
         this.logger.warn({
           message: "Error updating metadata for game.",
           game: game ? logGamevaultGame(game) : { id: gameId },
@@ -244,11 +256,11 @@ export class MetadataService {
    * @param game The game to update the metadata for.
    * @returns The updated game.
    */
-  private async updateMetadata(game: GamevaultGame): Promise<void> {
+  private async updateMetadata(game: GamevaultGame | undefined): Promise<void> {
     if (!game) {
       this.logger.error({
         message: "Corresponding metadata-job was not found",
-        game: { id: game.id },
+        game: undefined,
       });
       throw new NotFoundException("Corresponding metadata-job was not found");
     }
@@ -260,13 +272,11 @@ export class MetadataService {
 
     const versionPaths = (game.versions || [])
       .map((version) => version.file_path)
-      .filter((path) => !!path);
+      .filter((path): path is string => !!path);
     const candidatePaths =
       versionPaths.length > 0
         ? versionPaths
-        : [game.file_path].filter((path) => !!path);
-
-    // If any known game path contains "(NC)", skip the metadata update.
+        : [game.file_path].filter((path): path is string => !!path);
     if (candidatePaths.some((path) => path.includes("(NC)"))) {
       this.logger.debug({
         message: "Skipping metadata update for (NC) game.",
@@ -275,6 +285,9 @@ export class MetadataService {
       return;
     }
 
+    // Fork (2f2b400): tracks whether any provider actually changed. On a
+    // re-index where every provider is within TTL, upstream's unconditional
+    // merge fired thousands of un-awaited merges and exhausted the heap.
     let metadataChanged = false;
 
     for (const provider of this.providers.filter(
@@ -286,7 +299,8 @@ export class MetadataService {
           (metadata) => metadata.provider_slug === provider.slug,
         );
 
-        // Skip providers with negative priority
+        // Fork (1cb344d): a provider whose effective priority is negative is
+        // disabled for this game — do not even fetch from it.
         if (
           this.hasNegativePriority(
             provider.slug,
@@ -303,7 +317,7 @@ export class MetadataService {
             existingProviderMetadata.created_at) >
             new Date(
               Date.now() -
-                this.config.METADATA.TTL_IN_DAYS * 24 * 60 * 60 * 1000,
+                (this.config.METADATA.TTL_IN_DAYS ?? 30) * 24 * 60 * 60 * 1000,
             )
         ) {
           this.logger.debug({
@@ -329,7 +343,7 @@ export class MetadataService {
           await this.map(
             game.id,
             provider.slug,
-            existingProviderMetadata.provider_data_id,
+            existingProviderMetadata.provider_data_id ?? "",
           );
         } else {
           // If the existing provider metadata is not found, find the metadata.
@@ -346,9 +360,9 @@ export class MetadataService {
         });
       }
     }
-    // Only merge when a provider was actually updated. On re-indexes where all
-    // providers are within TTL, skipping merge here avoids thousands of
-    // concurrent fire-and-forget merge calls that would exhaust heap memory.
+    // Fork (2f2b400): only merge when a provider actually changed, and AWAIT
+    // it. Upstream's unconditional fire-and-forget merge produced thousands of
+    // concurrent merges on a full re-index and blew the heap.
     if (metadataChanged) {
       const heapMB = () =>
         Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
@@ -378,7 +392,11 @@ export class MetadataService {
     });
     try {
       const bestMatchingGame = await provider.getBestMatch(game);
-      await this.map(game.id, provider.slug, bestMatchingGame.provider_data_id);
+      await this.map(
+        game.id,
+        provider.slug,
+        bestMatchingGame.provider_data_id ?? "",
+      );
     } catch (error) {
       if (error instanceof NotFoundException) {
         this.logger.debug({
@@ -442,6 +460,8 @@ export class MetadataService {
       Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     const heapBefore = heapMB();
 
+    // Fork (716e36f): these relations MUST be loaded. Relation loading is
+    // opt-in now, and TypeORM cascades will DELETE un-loaded rows on save.
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
       loadRelations: CASCADE_SAFE_METADATA_RELATIONS,
@@ -464,8 +484,8 @@ export class MetadataService {
         return this.gamesService.save(game);
       }
 
-      // Fork: debug rather than warn — this fires for every unmatched game on
-      // a full re-index and drowned the logs at warn level.
+      // Fork (0325939): debug rather than warn — this fires for every
+      // unmatched game on a full re-index and drowned the logs.
       this.logger.debug({
         message: "No metadata sources available. Skipping merge.",
         game: logGamevaultGame(game),
@@ -551,15 +571,13 @@ export class MetadataService {
     base: GameMetadata,
     providerMetadata: GameMetadata[],
   ): GameMetadata {
-    // Fork: negative-priority providers are already excluded upstream of this
-    // call, in getMergeableProviderMetadata().
     const sortedProviders = providerMetadata.toSorted((a, b) => {
       const priorityA =
         a.provider_priority ??
-        this.getProviderBySlugOrFail(a.provider_slug).priority;
+        this.getProviderBySlugOrFail(a.provider_slug ?? "").priority;
       const priorityB =
         b.provider_priority ??
-        this.getProviderBySlugOrFail(b.provider_slug).priority;
+        this.getProviderBySlugOrFail(b.provider_slug ?? "").priority;
       return priorityA - priorityB;
     });
 
@@ -617,10 +635,10 @@ export class MetadataService {
         continue;
       }
 
-      // Fork: providers whose effective priority is negative are disabled for
-      // this game and must contribute nothing to the merged result — even if
-      // their rows already exist in the DB. Kept after the registered-slug
-      // check because hasNegativePriority() resolves the slug and would throw.
+      // Fork (1cb344d): providers whose effective priority is negative must
+      // contribute nothing to the merged result, even if their rows already
+      // exist in the DB. Kept AFTER the registered-slug check because
+      // hasNegativePriority() resolves the slug and would otherwise throw.
       if (
         this.hasNegativePriority(
           providerSlug,
@@ -689,7 +707,7 @@ export class MetadataService {
       provider_slug: "gamevault",
       provider_data_id: gameId.toString(),
       provider_priority: null,
-    } as GameMetadata;
+    } as unknown as GameMetadata;
 
     // Normalize relation entities to use gamevault as provider
     this.normalizeRelations(result.genres, "gamevault");
@@ -747,7 +765,9 @@ export class MetadataService {
       Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     const heapBefore = heapMB();
 
-    // Find the game by gameId.
+    // Fork (716e36f): cascade-sensitive. Without these relations loaded,
+    // TypeORM cascades DELETE the un-loaded metadata rows on save. This was a
+    // real data-loss bug.
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
       loadRelations: CASCADE_SAFE_METADATA_RELATIONS,
@@ -762,8 +782,8 @@ export class MetadataService {
     });
 
     // Clear the effective metadata.
-    game.provider_metadata = game.provider_metadata.filter(
-      (metadata) => metadata.provider_slug !== providerSlug,
+    game.provider_metadata = (game.provider_metadata ?? []).filter(
+      (metadata: GameMetadata) => metadata.provider_slug !== providerSlug,
     );
     this.logger.log({
       message: "Unmapped metadata provider from a game.",
@@ -834,13 +854,18 @@ export class MetadataService {
       await this.unmap(gameId, providerSlug);
 
       // Get the game and update its metadata
+      // Fork (716e36f): cascade-sensitive — see unmap().
       const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
         loadDeletedEntities: false,
         loadRelations: CASCADE_SAFE_METADATA_RELATIONS,
       });
 
       // Only add the metadata if it's not already associated with the game
-      if (!game.provider_metadata.some((m) => m.id === gameMetadata.id)) {
+      if (
+        !(game.provider_metadata ?? []).some(
+          (m: GameMetadata) => m.id === gameMetadata.id,
+        )
+      ) {
         this.logger.debug({
           message: "Adding new metadata provider mapping to game",
           game: logGamevaultGame(game),

@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsEmpty, IsNotEmpty, IsOptional } from "class-validator";
 
-import { ActivityState } from "./activity-state.enum";
+import { ActivityState } from "./activity-state.enum.js";
 
 export class Activity {
   @IsEmpty()
@@ -23,7 +23,7 @@ export class Activity {
     description: "The online-state to set the user to",
   })
   @IsNotEmpty()
-  state: ActivityState;
+  state!: ActivityState;
 
   @ApiPropertyOptional({
     description: "The game's id. Only required if the state is 'PLAYING'.",

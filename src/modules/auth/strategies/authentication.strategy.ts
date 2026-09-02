@@ -1,11 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
-import { AppConfiguration } from "../../../configuration";
-import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator";
-import { GamevaultUser } from "../../users/gamevault-user.entity";
-import { UsersService } from "../../users/users.service";
-import { GamevaultJwtPayload } from "../models/gamevault-jwt-payload.interface";
+import type { AppConfiguration } from "../../../configuration.js";
+import { InjectGamevaultConfig } from "../../../decorators/inject-gamevault-config.decorator.js";
+import type { GamevaultUser } from "../../users/gamevault-user.entity.js";
+import { UsersService } from "../../users/users.service.js";
+import { type GamevaultJwtPayload } from "../models/gamevault-jwt-payload.interface.js";
 
 /**
  * Fork: short-TTL user cache for JWT auth.

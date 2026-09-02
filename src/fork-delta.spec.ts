@@ -12,11 +12,13 @@
  * See CLAUDE.md → "Preserving the Fork Across Upstream Merges".
  */
 
-import { GamesService } from "./modules/games/games.service";
-import { MetadataService } from "./modules/metadata/metadata.service";
-import { MetadataProvider } from "./modules/metadata/providers/abstract.metadata-provider.service";
+import type { Mock } from "vitest";
+import configuration from "./configuration.js";
+import { GamesService } from "./modules/games/games.service.js";
+import { MetadataService } from "./modules/metadata/metadata.service.js";
+import { MetadataProvider } from "./modules/metadata/providers/abstract.metadata-provider.service.js";
 
-jest.mock("./configuration", () => ({
+vi.mock("./configuration.js", () => ({
   __esModule: true,
   default: {
     METADATA: { TTL_IN_DAYS: 30 },
@@ -26,25 +28,25 @@ jest.mock("./configuration", () => ({
   },
 }));
 
-jest.mock("./logging", () => ({
+vi.mock("./logging.js", () => ({
   __esModule: true,
   default: {
-    log: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
+    log: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
   },
-  logGamevaultGame: jest.fn((g) => ({ id: g?.id })),
-  logGamevaultUser: jest.fn(),
-  logMedia: jest.fn(),
-  logMetadata: jest.fn(),
-  logMetadataProvider: jest.fn((p) => ({ slug: p?.slug })),
-  logProgress: jest.fn(),
+  logGamevaultGame: vi.fn((g) => ({ id: g?.id })),
+  logGamevaultUser: vi.fn(),
+  logMedia: vi.fn(),
+  logMetadata: vi.fn(),
+  logMetadataProvider: vi.fn((p) => ({ slug: p?.slug })),
+  logProgress: vi.fn(),
 }));
 
-jest.mock("class-validator", () => ({
-  ...jest.requireActual("class-validator"),
-  validateOrReject: jest.fn().mockResolvedValue(undefined),
+vi.mock("class-validator", async () => ({
+  ...(await vi.importActual("class-validator")),
+  validateOrReject: vi.fn().mockResolvedValue(undefined),
 }));
 
 /**
@@ -93,10 +95,10 @@ function createMockProvider(
     priority: 10,
     enabled: true,
     request_interval_ms: 0,
-    search: jest.fn(),
-    getByProviderDataIdOrFail: jest.fn(),
-    getBestMatch: jest.fn(),
-    register: jest.fn(),
+    search: vi.fn(),
+    getByProviderDataIdOrFail: vi.fn(),
+    getBestMatch: vi.fn(),
+    register: vi.fn(),
     ...overrides,
   } as unknown as MetadataProvider;
 }
@@ -108,24 +110,24 @@ describe("Fork delta: metadata queue holds IDs, not entities", () => {
 
   beforeEach(() => {
     gamesService = {
-      findOneByGameIdOrFail: jest.fn(),
-      save: jest.fn().mockImplementation((g) => Promise.resolve(g)),
-      generateSortTitle: jest.fn().mockReturnValue("sort-title"),
+      findOneByGameIdOrFail: vi.fn(),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort-title"),
     };
     gameMetadataService = {
-      save: jest
+      save: vi
         .fn()
         .mockImplementation((m) => Promise.resolve({ ...m, id: 1 })),
-      deleteByGameMetadataIdOrFail: jest.fn().mockResolvedValue(undefined),
+      deleteByGameMetadataIdOrFail: vi.fn().mockResolvedValue(undefined),
     };
     service = new MetadataService(
       gamesService,
       gameMetadataService,
-      jest.requireMock("./configuration").default,
+      configuration as any,
     );
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   /**
    * Upstream: addUpdateMetadataJob(game: GamevaultGame) and the queue is a
@@ -145,7 +147,10 @@ describe("Fork delta: metadata queue holds IDs, not entities", () => {
 
     expect(gamesService.findOneByGameIdOrFail).toHaveBeenCalledWith(5, {
       loadDeletedEntities: false,
-      loadRelations: ["provider_metadata"],
+      // "versions" is eager on the entity and updateMetadata() reads it for
+      // the (NC) skip check, so it must be named explicitly now that relation
+      // loading is opt-in.
+      loadRelations: ["provider_metadata", "versions"],
     });
   });
 
@@ -183,18 +188,18 @@ describe("Fork delta: merge is skipped when no provider changed", () => {
 
   beforeEach(() => {
     gamesService = {
-      findOneByGameIdOrFail: jest.fn(),
-      save: jest.fn().mockImplementation((g) => Promise.resolve(g)),
-      generateSortTitle: jest.fn().mockReturnValue("sort-title"),
+      findOneByGameIdOrFail: vi.fn(),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort-title"),
     };
     service = new MetadataService(
       gamesService,
-      { save: jest.fn(), deleteByGameMetadataIdOrFail: jest.fn() } as any,
-      jest.requireMock("./configuration").default,
+      { save: vi.fn(), deleteByGameMetadataIdOrFail: vi.fn() } as any,
+      configuration as any,
     );
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   /**
    * Upstream calls this.merge(game.id) unconditionally at the end of
@@ -206,7 +211,7 @@ describe("Fork delta: merge is skipped when no provider changed", () => {
     service.registerProvider(
       createMockProvider({ slug: "igdb", priority: 10 }),
     );
-    const mergeSpy = jest.spyOn(service, "merge").mockResolvedValue({} as any);
+    const mergeSpy = vi.spyOn(service, "merge").mockResolvedValue({} as any);
 
     gamesService.findOneByGameIdOrFail.mockResolvedValue({
       id: 1,
@@ -232,8 +237,8 @@ describe("Fork delta: merge is skipped when no provider changed", () => {
     service.registerProvider(
       createMockProvider({ slug: "igdb", priority: 10 }),
     );
-    const mergeSpy = jest.spyOn(service, "merge").mockResolvedValue({} as any);
-    jest.spyOn(service as any, "map").mockResolvedValue(undefined);
+    const mergeSpy = vi.spyOn(service, "merge").mockResolvedValue({} as any);
+    vi.spyOn(service as any, "map").mockResolvedValue(undefined);
 
     gamesService.findOneByGameIdOrFail.mockResolvedValue({
       id: 2,
@@ -261,18 +266,18 @@ describe("Fork delta: negative-priority providers are disabled", () => {
 
   beforeEach(() => {
     gamesService = {
-      findOneByGameIdOrFail: jest.fn(),
-      save: jest.fn().mockImplementation((g) => Promise.resolve(g)),
-      generateSortTitle: jest.fn().mockReturnValue("sort-title"),
+      findOneByGameIdOrFail: vi.fn(),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort-title"),
     };
     service = new MetadataService(
       gamesService,
-      { save: jest.fn(), deleteByGameMetadataIdOrFail: jest.fn() } as any,
-      jest.requireMock("./configuration").default,
+      { save: vi.fn(), deleteByGameMetadataIdOrFail: vi.fn() } as any,
+      configuration as any,
     );
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   /**
    * Fork-only concept: a provider whose effective priority is negative is
@@ -282,10 +287,10 @@ describe("Fork delta: negative-priority providers are disabled", () => {
     service.registerProvider(
       createMockProvider({ slug: "vndb", priority: -1 }),
     );
-    const findMetadataSpy = jest
+    const findMetadataSpy = vi
       .spyOn(service as any, "findMetadata")
       .mockResolvedValue(undefined);
-    const mergeSpy = jest.spyOn(service, "merge").mockResolvedValue({} as any);
+    const mergeSpy = vi.spyOn(service, "merge").mockResolvedValue({} as any);
 
     gamesService.findOneByGameIdOrFail.mockResolvedValue({
       id: 3,
@@ -309,10 +314,10 @@ describe("Fork delta: negative-priority providers are disabled", () => {
     service.registerProvider(
       createMockProvider({ slug: "igdb", priority: 10 }),
     );
-    const mapSpy = jest
+    const mapSpy = vi
       .spyOn(service as any, "map")
       .mockResolvedValue(undefined);
-    const mergeSpy = jest.spyOn(service, "merge").mockResolvedValue({} as any);
+    const mergeSpy = vi.spyOn(service, "merge").mockResolvedValue({} as any);
 
     gamesService.findOneByGameIdOrFail.mockResolvedValue({
       id: 4,
@@ -376,26 +381,26 @@ describe("Fork delta: cascade-sensitive relations are loaded before saving", () 
 
   beforeEach(() => {
     gamesService = {
-      findOneByGameIdOrFail: jest.fn().mockResolvedValue({
+      findOneByGameIdOrFail: vi.fn().mockResolvedValue({
         id: 1,
         provider_metadata: [],
         user_metadata: null,
         metadata: null,
       }),
-      save: jest.fn().mockImplementation((g) => Promise.resolve(g)),
-      generateSortTitle: jest.fn().mockReturnValue("sort-title"),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort-title"),
     };
     service = new MetadataService(
       gamesService,
       {
-        save: jest.fn().mockImplementation((m) => Promise.resolve(m)),
-        deleteByGameMetadataIdOrFail: jest.fn().mockResolvedValue(undefined),
+        save: vi.fn().mockImplementation((m) => Promise.resolve(m)),
+        deleteByGameMetadataIdOrFail: vi.fn().mockResolvedValue(undefined),
       } as any,
-      jest.requireMock("./configuration").default,
+      configuration as any,
     );
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   /**
    * Because relation loading is opt-in in this fork, any relation NOT loaded
@@ -441,7 +446,7 @@ describe("Fork delta: cascade-sensitive relations are loaded before saving", () 
       createMockProvider({
         slug: "igdb",
         priority: 10,
-        getByProviderDataIdOrFail: jest
+        getByProviderDataIdOrFail: vi
           .fn()
           .mockResolvedValue({ provider_slug: "igdb", provider_data_id: "x" }),
       }),
@@ -499,26 +504,26 @@ describe("Fork delta: recache loads nested eager children explicitly (TypeORM 1.
 
   beforeEach(() => {
     gamesService = {
-      findOneByGameIdOrFail: jest.fn().mockResolvedValue({
+      findOneByGameIdOrFail: vi.fn().mockResolvedValue({
         id: 1,
         provider_metadata: [],
         user_metadata: null,
         metadata: null,
       }),
-      save: jest.fn().mockImplementation((g) => Promise.resolve(g)),
-      generateSortTitle: jest.fn().mockReturnValue("sort-title"),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort-title"),
     };
     service = new MetadataService(
       gamesService,
       {
-        save: jest.fn().mockImplementation((m) => Promise.resolve(m)),
-        deleteByGameMetadataIdOrFail: jest.fn().mockResolvedValue(undefined),
+        save: vi.fn().mockImplementation((m) => Promise.resolve(m)),
+        deleteByGameMetadataIdOrFail: vi.fn().mockResolvedValue(undefined),
       } as any,
-      jest.requireMock("./configuration").default,
+      configuration as any,
     );
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   const EAGER_CHILDREN = [
     "cover",
@@ -560,7 +565,7 @@ describe("Fork delta: recache loads nested eager children explicitly (TypeORM 1.
       createMockProvider({
         slug: "igdb",
         priority: 10,
-        getByProviderDataIdOrFail: jest
+        getByProviderDataIdOrFail: vi
           .fn()
           .mockResolvedValue({ provider_slug: "igdb", provider_data_id: "x" }),
       }),
@@ -588,9 +593,9 @@ describe("Fork delta: relation loading is opt-in", () => {
 
   beforeEach(() => {
     gamesRepository = {
-      find: jest.fn().mockResolvedValue([]),
-      findOne: jest.fn().mockResolvedValue(null),
-      findOneOrFail: jest.fn().mockResolvedValue({ id: 1 }),
+      find: vi.fn().mockResolvedValue([]),
+      findOne: vi.fn().mockResolvedValue(null),
+      findOneOrFail: vi.fn().mockResolvedValue({ id: 1 }),
     };
     // Constructed through `any` so this file also compiles against pre-v17
     // trees, where GamesService took one fewer constructor argument (the
@@ -598,13 +603,13 @@ describe("Fork delta: relation loading is opt-in", () => {
     // rest are inert stubs in either arity.
     service = new (GamesService as any)(
       gamesRepository,
-      { find: jest.fn(), findOne: jest.fn() } as any,
+      { find: vi.fn(), findOne: vi.fn() } as any,
       {} as any,
       {} as any,
     );
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   /**
    * Upstream's find() leaves loadEagerRelations at its default (true), so every
@@ -681,8 +686,8 @@ describe("Fork delta: relation loading is opt-in", () => {
  */
 describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
   let usersService: {
-    findUserForAuthOrFail: jest.Mock;
-    findOneByUsernameOrFail: jest.Mock;
+    findUserForAuthOrFail: Mock;
+    findOneByUsernameOrFail: Mock;
   };
   let strategy: any;
   const payload = {
@@ -691,22 +696,24 @@ describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
     email: "u@example.com",
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     usersService = {
-      findUserForAuthOrFail: jest.fn().mockResolvedValue({ username: "u" }),
-      findOneByUsernameOrFail: jest
+      findUserForAuthOrFail: vi.fn().mockResolvedValue({ username: "u" }),
+      findOneByUsernameOrFail: vi
         .fn()
         .mockResolvedValue({ id: 1, username: "u" }),
     };
-    const { AuthenticationStrategy } = jest.requireActual<{
+    const { AuthenticationStrategy } = (await vi.importActual(
+      "./modules/auth/strategies/authentication.strategy.js",
+    )) as {
       AuthenticationStrategy: new (svc: unknown, cfg: unknown) => unknown;
-    }>("./modules/auth/strategies/authentication.strategy");
+    };
     strategy = new AuthenticationStrategy(usersService as unknown, {
       AUTH: { ACCESS_TOKEN: { SECRET: "test-secret" } },
     });
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   it("coalesces repeated validate() calls with the same payload into one DB round-trip", async () => {
     await strategy.validate({ payload });
@@ -718,16 +725,16 @@ describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
   });
 
   it("re-fetches after the cache TTL expires", async () => {
-    jest.useFakeTimers({ now: Date.now() });
+    vi.useFakeTimers({ now: Date.now() });
 
     try {
       await strategy.validate({ payload });
-      jest.setSystemTime(Date.now() + 61_000); // > 60s TTL
+      vi.setSystemTime(Date.now() + 61_000); // > 60s TTL
       await strategy.validate({ payload });
 
       expect(usersService.findUserForAuthOrFail).toHaveBeenCalledTimes(2);
     } finally {
-      jest.useRealTimers();
+      vi.useRealTimers();
     }
   });
 

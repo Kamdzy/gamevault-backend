@@ -1,8 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import configuration from "../../../configuration";
-import { AuthenticationMethod } from "./authentication-method.enum";
-import { RegistrationFields } from "./registration-fields.enum";
-import { StatusEnum } from "./status.enum";
+import configuration from "../../../configuration.js";
+import { AuthenticationMethod } from "./authentication-method.enum.js";
+import { RegistrationFields } from "./registration-fields.enum.js";
+import { StatusEnum } from "./status.enum.js";
 
 export class StatusEntry {
   @ApiProperty({
@@ -109,14 +109,14 @@ export class Status {
       configuration.USERS.REQUIRE_LAST_NAME
         ? RegistrationFields.LAST_NAME
         : null,
-    ].filter(Boolean);
+    ].filter((field): field is RegistrationFields => field !== null);
 
     this.available_authentication_methods = [
       configuration.AUTH.BASIC_AUTH.ENABLED ? AuthenticationMethod.BASIC : null,
       configuration.AUTH.OAUTH2.ENABLED ? AuthenticationMethod.SSO : null,
-    ].filter(Boolean);
+    ].filter((method): method is AuthenticationMethod => method !== null);
 
-    this.server_uuid = serverUuid;
+    this.server_uuid = serverUuid ?? "";
     this.uptime = Math.floor((Date.now() - epoch.getTime()) / 1000);
     this.protocol = protocol;
   }

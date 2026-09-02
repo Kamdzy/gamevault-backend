@@ -8,18 +8,13 @@ import {
 import { isUUID } from "class-validator";
 import { randomUUID } from "crypto";
 import fileTypeChecker from "file-type-checker";
-import {
-  createReadStream,
-  ensureDir,
-  readdir,
-  remove,
-  stat,
-  writeFile,
-} from "fs-extra";
+import fsExtra from "fs-extra";
 import path, { basename, dirname } from "path";
-import { AppConfiguration } from "../../configuration";
-import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
-import { UsersService } from "../users/users.service";
+import type { AppConfiguration } from "../../configuration.js";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator.js";
+import { UsersService } from "../users/users.service.js";
+const { createReadStream, ensureDir, readdir, remove, stat, writeFile } =
+  fsExtra;
 
 @Injectable()
 export class SavefileService {
@@ -100,7 +95,7 @@ export class SavefileService {
     return new StreamableFile(file, {
       disposition: `attachment; filename="${basename(path)}"`,
       length: (await stat(path)).size,
-      type: mime.getType(path),
+      type: mime.getType(path) ?? undefined,
     });
   }
 
@@ -120,7 +115,7 @@ export class SavefileService {
   ): Promise<void> {
     await this.usersService.checkIfUsernameMatchesIdOrIsAdminOrThrow(
       userId,
-      executorUsername,
+      executorUsername ?? "",
     );
     if (this.config.TESTING.MOCK_FILES) {
       this.logger.warn({
@@ -251,10 +246,9 @@ export class SavefileService {
     const errorContextObject = {
       type,
       bufferLength: savefileBuffer.length,
-      bufferStart: savefileBuffer
-        .toString("hex", 0, 32)
-        .match(/.{1,2}/g)
-        .join(" "),
+      bufferStart: (
+        savefileBuffer.toString("hex", 0, 32).match(/.{1,2}/g) ?? []
+      ).join(" "),
     };
     if (!type?.extension || !type?.mimeType) {
       throw new BadRequestException(
@@ -281,7 +275,7 @@ export class SavefileService {
     gameId: number,
     executorUsername: string,
   ): Promise<void> {
-    const maxSaves = this.config.SAVEFILES.MAX_SAVES;
+    const maxSaves = this.config.SAVEFILES.MAX_SAVES ?? 0;
     if (maxSaves <= 0) {
       return;
     }

@@ -1,10 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { Column, Entity, Index, ManyToOne } from "typeorm";
+import { Column, Entity, Index, ManyToOne, type Relation } from "typeorm";
 
-import { DatabaseEntity } from "../database/database.entity";
-import { GamevaultGame } from "../games/gamevault-game.entity";
-import { GamevaultUser } from "../users/gamevault-user.entity";
-import { State } from "./models/state.enum";
+import { DatabaseEntity } from "../database/database.entity.js";
+import { GamevaultGame } from "../games/gamevault-game.entity.js";
+import { GamevaultUser } from "../users/gamevault-user.entity.js";
+import { State } from "./models/state.enum.js";
 
 @Entity()
 export class Progress extends DatabaseEntity {
@@ -14,7 +14,7 @@ export class Progress extends DatabaseEntity {
     description: "user the progress belongs to",
     type: () => GamevaultUser,
   })
-  user?: GamevaultUser;
+  user?: Relation<GamevaultUser>;
 
   @Index()
   @ManyToOne(() => GamevaultGame, (game) => game.progresses)
@@ -22,14 +22,14 @@ export class Progress extends DatabaseEntity {
     description: "game the progress belongs to",
     type: () => GamevaultGame,
   })
-  game?: GamevaultGame;
+  game?: Relation<GamevaultGame>;
 
   @Column({ type: "int", default: 0 })
   @ApiProperty({
     description: "playtime in minutes",
     example: 25,
   })
-  minutes_played: number;
+  minutes_played!: number;
 
   @Column({ type: "simple-enum", enum: State, default: State.UNPLAYED })
   @ApiProperty({
@@ -38,7 +38,7 @@ export class Progress extends DatabaseEntity {
     enum: State,
     example: State.PLAYING,
   })
-  state: State;
+  state!: State;
 
   @Column({ nullable: true })
   @ApiPropertyOptional({

@@ -1,23 +1,25 @@
 import { Logger, NotImplementedException } from "@nestjs/common";
 import { randomBytes } from "crypto";
-import { pathExists } from "fs-extra";
-import { toLower, uniqBy } from "lodash";
-import { In, MigrationInterface, QueryRunner } from "typeorm";
-import { GamevaultGame } from "../../../games/gamevault-game.entity";
-import { Media } from "../../../media/media.entity";
-import { DeveloperMetadata } from "../../../metadata/developers/developer.metadata.entity";
-import { GameMetadata } from "../../../metadata/games/game.metadata.entity";
-import { GenreMetadata } from "../../../metadata/genres/genre.metadata.entity";
-import { PublisherMetadata } from "../../../metadata/publishers/publisher.metadata.entity";
-import { TagMetadata } from "../../../metadata/tags/tag.metadata.entity";
-import { DeveloperV12 } from "../../legacy-entities/developer.v12-entity";
-import { GameV12 } from "../../legacy-entities/game.v12-entity";
-import { GamevaultUserV12 } from "../../legacy-entities/gamevault-user.v12-entity";
-import { GenreV12 } from "../../legacy-entities/genre.v12-entity";
-import { ImageV12 } from "../../legacy-entities/image.v12-entity";
-import { ProgressV12 } from "../../legacy-entities/progress.v12-entity";
-import { PublisherV12 } from "../../legacy-entities/publisher.v12-entity";
-import { TagV12 } from "../../legacy-entities/tag.v12-entity";
+import fsExtra from "fs-extra";
+import lodash from "lodash";
+import { In, MigrationInterface, type QueryRunner } from "typeorm";
+import { GamevaultGame } from "../../../games/gamevault-game.entity.js";
+import { Media } from "../../../media/media.entity.js";
+import { DeveloperMetadata } from "../../../metadata/developers/developer.metadata.entity.js";
+import { GameMetadata } from "../../../metadata/games/game.metadata.entity.js";
+import { GenreMetadata } from "../../../metadata/genres/genre.metadata.entity.js";
+import { PublisherMetadata } from "../../../metadata/publishers/publisher.metadata.entity.js";
+import { TagMetadata } from "../../../metadata/tags/tag.metadata.entity.js";
+import { DeveloperV12 } from "../../legacy-entities/developer.v12-entity.js";
+import { GameV12 } from "../../legacy-entities/game.v12-entity.js";
+import { GamevaultUserV12 } from "../../legacy-entities/gamevault-user.v12-entity.js";
+import { GenreV12 } from "../../legacy-entities/genre.v12-entity.js";
+import { ImageV12 } from "../../legacy-entities/image.v12-entity.js";
+import { ProgressV12 } from "../../legacy-entities/progress.v12-entity.js";
+import { PublisherV12 } from "../../legacy-entities/publisher.v12-entity.js";
+import { TagV12 } from "../../legacy-entities/tag.v12-entity.js";
+const { pathExists } = fsExtra;
+const { toLower, uniqBy } = lodash;
 
 export class V13Final1728421385000 implements MigrationInterface {
   private readonly logger = new Logger(this.constructor.name);
@@ -998,7 +1000,7 @@ export class V13Final1728421385000 implements MigrationInterface {
           image.deleted_at,
           image.entity_version,
           image.source,
-          image.path.replace("/images/", "/media/"),
+          image.path?.replace("/images/", "/media/") ?? "",
           image.mediaType ?? "application/octet-stream",
           image.uploader?.id,
         ],
@@ -1199,6 +1201,12 @@ export class V13Final1728421385000 implements MigrationInterface {
         withDeleted: true,
       });
 
+      if (!migratedGame) {
+        throw new Error(
+          `Migrated GamevaultGame with id ${game.id} could not be re-fetched.`,
+        );
+      }
+
       const cover = game.box_image
         ? await queryRunner.manager.findOne(Media, {
             where: { id: game.box_image.id },
@@ -1224,8 +1232,8 @@ export class V13Final1728421385000 implements MigrationInterface {
           const userMetadata = await queryRunner.manager.save(GameMetadata, {
             provider_slug: "user",
             provider_data_id: game.id?.toString(),
-            cover,
-            background,
+            cover: cover ?? undefined,
+            background: background ?? undefined,
           });
           migratedGame.user_metadata = userMetadata;
           await queryRunner.manager.save(GamevaultGame, migratedGame);
@@ -1302,9 +1310,9 @@ export class V13Final1728421385000 implements MigrationInterface {
           release_date: game.rawg_release_date,
           description: game.description,
           average_playtime: game.average_playtime,
-          cover,
-          background,
-          url_websites: [game.website_url],
+          cover: cover ?? undefined,
+          background: background ?? undefined,
+          url_websites: game.website_url ? [game.website_url] : undefined,
           rating: game.metacritic_rating,
           early_access: game.early_access,
           tags,

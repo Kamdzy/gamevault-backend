@@ -1,4 +1,4 @@
-import { File } from "./models/file.model";
+import { type File } from "../modules/games/models/file.model.js";
 
 export default [
   {

@@ -13,31 +13,32 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { hash } from "bcrypt";
 import { randomBytes } from "crypto";
+import lodash from "lodash";
 import {
   EntityNotFoundError,
-  FindManyOptions,
-  FindOptionsWhere,
+  type FindManyOptions,
+  type FindOptionsWhere,
   ILike,
   IsNull,
   Not,
   Repository,
 } from "typeorm";
-
-import { toLower } from "lodash";
-import { AppConfiguration } from "../../configuration";
-import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator";
+import type { AppConfiguration } from "../../configuration.js";
+import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator.js";
 import {
-  FindOptions,
+  type FindOptions,
   toFindOptionsRelations,
   toFindOptionsSelect,
-} from "../../globals";
-import { logGamevaultGame } from "../../logging";
-import { GamesService } from "../games/games.service";
-import { MediaService } from "../media/media.service";
-import { GamevaultUser } from "./gamevault-user.entity";
-import { RegisterUserDto } from "./models/register-user.dto";
-import { Role } from "./models/role.enum";
-import { UpdateUserDto } from "./models/update-user.dto";
+} from "../../globals.js";
+import { logGamevaultGame } from "../../logging.js";
+import { GamesService } from "../games/games.service.js";
+import { MediaService } from "../media/media.service.js";
+import { GamevaultUser } from "./gamevault-user.entity.js";
+import { type RegisterUserDto } from "./models/register-user.dto.js";
+import { Role } from "./models/role.enum.js";
+import { type UpdateUserDto } from "./models/update-user.dto.js";
+
+const { toLower } = lodash;
 
 @Injectable()
 export class UsersService implements OnApplicationBootstrap {
@@ -47,7 +48,8 @@ export class UsersService implements OnApplicationBootstrap {
     @InjectRepository(GamevaultUser)
     private readonly userRepository: Repository<GamevaultUser>,
     @Inject(forwardRef(() => MediaService))
-    private readonly mediaService: MediaService,
+    // Cyclic service reference (ESM): intentionally loosely typed to avoid design:paramtypes TDZ
+    private readonly mediaService: any,
     @Inject(forwardRef(() => GamesService))
     private readonly gamesService: GamesService,
     @InjectGamevaultConfig() private readonly config: AppConfiguration,
@@ -209,7 +211,7 @@ export class UsersService implements OnApplicationBootstrap {
     user.email = dto.email || undefined;
     user.birth_date = dto.birth_date ? new Date(dto.birth_date) : undefined;
     user.activated = isActivated;
-    user.role = isAdministrator ? Role.ADMIN : undefined;
+    user.role = isAdministrator ? Role.ADMIN : Role.USER;
 
     const registeredUser = await this.userRepository.save(user);
     registeredUser.password = "**REDACTED**";
@@ -288,7 +290,7 @@ export class UsersService implements OnApplicationBootstrap {
   }
 
   public cleanConfidentialUser(user: GamevaultUser): GamevaultUser {
-    delete user.password;
+    delete (user as Partial<GamevaultUser>).password;
     delete user.api_key;
     return user;
   }
@@ -300,7 +302,11 @@ export class UsersService implements OnApplicationBootstrap {
     isAdmin = false,
   ): Promise<GamevaultUser> {
     const user = await this.findOneByUserIdOrFail(id, { loadRelations: false });
-    const logUpdate = (property: string, from: string, to: string) => {
+    const logUpdate = (
+      property: string,
+      from: string | undefined,
+      to: string | undefined,
+    ) => {
       this.logger.log({
         message: "Updating user property",
         user: user.username,
@@ -384,20 +390,28 @@ export class UsersService implements OnApplicationBootstrap {
     dto: UpdateUserDto,
     user: GamevaultUser,
   ): Promise<void> {
-    if (toLower(dto.username) !== toLower(user.username)) {
-      await this.throwIfAlreadyExists(dto.username, undefined);
+    const username = dto.username;
+    if (username == null) {
+      return;
     }
-    user.username = dto.username;
+    if (toLower(username) !== toLower(user.username)) {
+      await this.throwIfAlreadyExists(username, undefined);
+    }
+    user.username = username;
   }
 
   private async updateEmail(
     dto: UpdateUserDto,
     user: GamevaultUser,
   ): Promise<void> {
-    if (toLower(dto.email) !== toLower(user.email)) {
-      await this.throwIfAlreadyExists(undefined, dto.email);
+    const email = dto.email;
+    if (email == null) {
+      return;
     }
-    user.email = dto.email;
+    if (toLower(email) !== toLower(user.email)) {
+      await this.throwIfAlreadyExists(undefined, email);
+    }
+    user.email = email;
   }
 
   private async updateBirthDate(
@@ -409,7 +423,7 @@ export class UsersService implements OnApplicationBootstrap {
       user.birth_date &&
       this.config.PARENTAL.AGE_RESTRICTION_ENABLED &&
       this.calculateAge(user.birth_date) <
-        this.config.PARENTAL.AGE_OF_MAJORITY &&
+        (this.config.PARENTAL.AGE_OF_MAJORITY ?? 18) &&
       user.role !== Role.ADMIN &&
       !isAdmin
     ) {
@@ -417,7 +431,7 @@ export class UsersService implements OnApplicationBootstrap {
         "You are too young to update your birth date. Contact an Administrator to update your birth date.",
       );
     }
-    user.birth_date = new Date(dto.birth_date);
+    user.birth_date = dto.birth_date ? new Date(dto.birth_date) : undefined;
   }
 
   /** Soft deletes a user with the specified ID. */
@@ -455,7 +469,7 @@ export class UsersService implements OnApplicationBootstrap {
       loadDeletedEntities: false,
       loadRelations: false,
     });
-    return this.calculateAge(user.birth_date);
+    return user.birth_date ? this.calculateAge(user.birth_date) : 0;
   }
 
   /** Check if the username matches the user ID or is an administrator */
@@ -469,10 +483,11 @@ export class UsersService implements OnApplicationBootstrap {
     if (!username) {
       throw new UnauthorizedException("No Authorization provided");
     }
-    const user = await this.findOneByUserIdOrFail(userId);
-    if (user.role === Role.ADMIN) {
+    // Administrators may modify any user's data.
+    if (await this.checkIfUsernameIsAtLeastRole(username, Role.ADMIN)) {
       return true;
     }
+    const user = await this.findOneByUserIdOrFail(userId);
     if (toLower(user.username) !== toLower(username)) {
       throw new ForbiddenException(
         {
@@ -492,12 +507,14 @@ export class UsersService implements OnApplicationBootstrap {
       loadDeletedEntities: false,
       loadRelations: ["bookmarked_games"],
     });
-    if (user.bookmarked_games.some((game) => game.id === gameId)) {
+    if ((user.bookmarked_games ?? []).some((game) => game.id === gameId)) {
       return user;
     }
 
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
+      // Fork (9daff5c): relation loading is opt-in in findOneByGameIdOrFail;
+      // bookmark mutations persist the game with its relations attached.
       loadRelations: true,
     });
 
@@ -507,7 +524,7 @@ export class UsersService implements OnApplicationBootstrap {
       .of(user)
       .add(game);
 
-    user.bookmarked_games.push(game);
+    (user.bookmarked_games ??= []).push(game);
 
     this.logger.log({
       message: "User bookmarked game.",
@@ -523,12 +540,14 @@ export class UsersService implements OnApplicationBootstrap {
       loadDeletedEntities: false,
       loadRelations: ["bookmarked_games"],
     });
-    if (!user.bookmarked_games.some((game) => game.id === gameId)) {
+    if (!(user.bookmarked_games ?? []).some((game) => game.id === gameId)) {
       return user;
     }
 
     const game = await this.gamesService.findOneByGameIdOrFail(gameId, {
       loadDeletedEntities: false,
+      // Fork (9daff5c): relation loading is opt-in in findOneByGameIdOrFail;
+      // bookmark mutations persist the game with its relations attached.
       loadRelations: true,
     });
 
@@ -538,7 +557,7 @@ export class UsersService implements OnApplicationBootstrap {
       .of(user)
       .remove(game);
 
-    user.bookmarked_games = user.bookmarked_games.filter((bookmark) => {
+    user.bookmarked_games = (user.bookmarked_games ?? []).filter((bookmark) => {
       return bookmark.id !== game.id;
     });
 

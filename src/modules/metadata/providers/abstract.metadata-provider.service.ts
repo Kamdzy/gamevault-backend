@@ -12,26 +12,27 @@ import {
   Matches,
   Min,
 } from "class-validator";
+import lodash from "lodash";
 import { stringSimilarity } from "string-similarity-js";
+import globals from "../../../globals.js";
+import { logGamevaultGame } from "../../../logging.js";
+import { GamevaultGame } from "../../games/gamevault-game.entity.js";
+import { MediaService } from "../../media/media.service.js";
+import { DeveloperMetadata } from "../developers/developer.metadata.entity.js";
+import { DeveloperMetadataService } from "../developers/developer.metadata.service.js";
+import { GameMetadata } from "../games/game.metadata.entity.js";
+import { GameMetadataService } from "../games/game.metadata.service.js";
+import { type MinimalGameMetadataDto } from "../games/minimal-game.metadata.dto.js";
+import { GenreMetadata } from "../genres/genre.metadata.entity.js";
+import { GenreMetadataService } from "../genres/genre.metadata.service.js";
+import { MetadataService } from "../metadata.service.js";
+import { PublisherMetadata } from "../publishers/publisher.metadata.entity.js";
+import { PublisherMetadataService } from "../publishers/publisher.metadata.service.js";
+import { TagMetadata } from "../tags/tag.metadata.entity.js";
+import { TagMetadataService } from "../tags/tag.metadata.service.js";
+import { MetadataProviderDto } from "./models/metadata-provider.dto.js";
 
-import { kebabCase } from "lodash";
-import globals from "../../../globals";
-import { logGamevaultGame } from "../../../logging";
-import { GamevaultGame } from "../../games/gamevault-game.entity";
-import { MediaService } from "../../media/media.service";
-import { DeveloperMetadata } from "../developers/developer.metadata.entity";
-import { DeveloperMetadataService } from "../developers/developer.metadata.service";
-import { GameMetadata } from "../games/game.metadata.entity";
-import { GameMetadataService } from "../games/game.metadata.service";
-import { MinimalGameMetadataDto } from "../games/minimal-game.metadata.dto";
-import { GenreMetadata } from "../genres/genre.metadata.entity";
-import { GenreMetadataService } from "../genres/genre.metadata.service";
-import { MetadataService } from "../metadata.service";
-import { PublisherMetadata } from "../publishers/publisher.metadata.entity";
-import { PublisherMetadataService } from "../publishers/publisher.metadata.service";
-import { TagMetadata } from "../tags/tag.metadata.entity";
-import { TagMetadataService } from "../tags/tag.metadata.service";
-import { MetadataProviderDto } from "./models/metadata-provider.dto";
+const { kebabCase } = lodash;
 
 @Injectable()
 export abstract class MetadataProvider
@@ -61,14 +62,14 @@ export abstract class MetadataProvider
     message:
       "Invalid slug: The terms 'gamevault' and 'user' are reserved slugs.",
   })
-  public slug: string;
+  public slug!: string;
 
   @IsNotEmpty()
-  public name: string;
+  public name!: string;
 
   @IsInt()
   @IsNotEmpty()
-  public priority: number;
+  public priority!: number;
 
   @IsBoolean()
   public enabled = true;
@@ -116,10 +117,7 @@ export abstract class MetadataProvider
   ): Promise<MinimalGameMetadataDto> {
     // Search for the game using all available metadata providers but remove Edition Tags in the search.
     const gameResults = await this.search(
-      game.title
-        .replace(/\[.*?\]/g, "")
-        .replaceAll("  ", " ")
-        .trim(),
+      (game.title ?? "").replaceAll("  ", " ").trim(),
     );
 
     // If no matching games are found, throw an exception.
@@ -162,7 +160,7 @@ export abstract class MetadataProvider
 
         probabilityMap.set(
           gameResults.indexOf(gameResult),
-          probabilityMap.get(gameResults.indexOf(gameResult)) -
+          (probabilityMap.get(gameResults.indexOf(gameResult)) ?? 0) -
             Math.abs(gameResultReleaseYear - gameReleaseYear) / 10,
         );
       }
@@ -171,8 +169,8 @@ export abstract class MetadataProvider
     // Sort the game results by the match probability in descending order.
     gameResults.sort(
       (a, b) =>
-        probabilityMap.get(gameResults.indexOf(b)) -
-        probabilityMap.get(gameResults.indexOf(a)),
+        (probabilityMap.get(gameResults.indexOf(b)) ?? 0) -
+        (probabilityMap.get(gameResults.indexOf(a)) ?? 0),
     );
 
     this.logger.debug({
@@ -187,7 +185,7 @@ export abstract class MetadataProvider
     });
 
     // Return the game result with the highest match probability.
-    return gameResults.shift();
+    return gameResults.shift()!;
   }
 
   public async register() {

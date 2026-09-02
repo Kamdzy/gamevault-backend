@@ -9,9 +9,9 @@ import {
   MinLength,
 } from "class-validator";
 
-import configuration from "../../../configuration";
-import { IsDateStringBeforeNow } from "../../../validators/is-date-string-before-now.validator";
-import { IsOptionalIf } from "../../../validators/is-optional-if.validator";
+import configuration from "../../../configuration.js";
+import { IsDateStringBeforeNow } from "../../../validators/is-date-string-before-now.validator.js";
+import { IsOptionalIf } from "../../../validators/is-optional-if.validator.js";
 
 export class RegisterUserDto {
   @Matches(/^\w+$/, {
@@ -21,7 +21,7 @@ export class RegisterUserDto {
   @Length(2, 32)
   @IsNotEmpty()
   @ApiProperty({ example: "JohnDoe", description: "username of the user" })
-  username: string;
+  username!: string;
 
   @MinLength(8)
   @IsNotEmpty()
@@ -30,7 +30,7 @@ export class RegisterUserDto {
     minLength: 8,
     description: "password of the user",
   })
-  password: string;
+  password!: string;
 
   @IsOptionalIf(configuration.USERS.REQUIRE_EMAIL === false)
   @IsEmail()

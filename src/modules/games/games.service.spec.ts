@@ -3,20 +3,21 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Repository } from "typeorm";
-import { GameMetadataService } from "../metadata/games/game.metadata.service";
-import { MetadataService } from "../metadata/metadata.service";
-import { GameVersion } from "./game-version.entity";
-import { GamesService } from "./games.service";
-import { GamevaultGame } from "./gamevault-game.entity";
-import { GameExistence } from "./models/game-existence.enum";
-import { GameType } from "./models/game-type.enum";
+import type { Mocked } from "vitest";
+import { GameMetadataService } from "../metadata/games/game.metadata.service.js";
+import { MetadataService } from "../metadata/metadata.service.js";
+import { GameVersion } from "./game-version.entity.js";
+import { GamesService } from "./games.service.js";
+import { GamevaultGame } from "./gamevault-game.entity.js";
+import { GameExistence } from "./models/game-existence.enum.js";
+import { GameType } from "./models/game-type.enum.js";
 
 describe("GamesService", () => {
   let service: GamesService;
-  let gamesRepository: jest.Mocked<Repository<GamevaultGame>>;
-  let gameVersionRepository: jest.Mocked<Repository<GameVersion>>;
-  let metadataService: jest.Mocked<MetadataService>;
-  let gameMetadataService: jest.Mocked<GameMetadataService>;
+  let gamesRepository: Mocked<Repository<GamevaultGame>>;
+  let gameVersionRepository: Mocked<Repository<GameVersion>>;
+  let metadataService: Mocked<MetadataService>;
+  let gameMetadataService: Mocked<GameMetadataService>;
 
   const createMockGame = (
     overrides: Partial<GamevaultGame> = {},
@@ -37,28 +38,28 @@ describe("GamesService", () => {
 
   beforeEach(() => {
     gamesRepository = {
-      findOneOrFail: jest.fn(),
-      findOne: jest.fn(),
-      find: jest.fn(),
-      save: jest.fn(),
-      softRemove: jest.fn(),
-      recover: jest.fn(),
-      createQueryBuilder: jest.fn(),
+      findOneOrFail: vi.fn(),
+      findOne: vi.fn(),
+      find: vi.fn(),
+      save: vi.fn(),
+      softRemove: vi.fn(),
+      recover: vi.fn(),
+      createQueryBuilder: vi.fn(),
     } as any;
 
     metadataService = {
-      unmap: jest.fn(),
-      map: jest.fn(),
-      merge: jest.fn(),
-      addUpdateMetadataJob: jest.fn(),
+      unmap: vi.fn(),
+      map: vi.fn(),
+      merge: vi.fn(),
+      addUpdateMetadataJob: vi.fn(),
     } as any;
 
     gameMetadataService = {
-      save: jest.fn(),
+      save: vi.fn(),
     } as any;
 
     gameVersionRepository = {
-      findOne: jest.fn(),
+      findOne: vi.fn(),
     } as any;
 
     service = new GamesService(
@@ -246,7 +247,7 @@ describe("GamesService", () => {
       gamesRepository.find.mockResolvedValueOnce([
         createMockGame({
           release_date: new Date("2025-06-15T00:00:00.000Z"),
-          deleted_at: null,
+          deleted_at: undefined,
         }),
       ]);
 
@@ -260,7 +261,7 @@ describe("GamesService", () => {
       gamesRepository.findOne.mockResolvedValueOnce(null); // by file_path
       gamesRepository.find.mockResolvedValueOnce([
         createMockGame({ release_date: new Date("2020-01-01T00:00:00.000Z") }),
-        createMockGame({ release_date: undefined, deleted_at: null }),
+        createMockGame({ release_date: undefined, deleted_at: undefined }),
       ]);
 
       const [existence] = await service.checkIfExistsInDatabase(game);
@@ -270,7 +271,7 @@ describe("GamesService", () => {
     it("should return EXISTS when game is identical", async () => {
       const game = createMockGame();
       gamesRepository.findOne.mockResolvedValueOnce(
-        createMockGame({ deleted_at: null }),
+        createMockGame({ deleted_at: undefined }),
       );
       const [existence] = await service.checkIfExistsInDatabase(game);
       expect(existence).toBe(GameExistence.EXISTS);
@@ -290,7 +291,7 @@ describe("GamesService", () => {
     it("should return EXISTS_BUT_ALTERED when game has changes", async () => {
       const game = createMockGame({ title: "New Title" });
       gamesRepository.findOne.mockResolvedValueOnce(
-        createMockGame({ title: "Old Title", deleted_at: null }),
+        createMockGame({ title: "Old Title", deleted_at: undefined }),
       );
       const [existence] = await service.checkIfExistsInDatabase(game);
       expect(existence).toBe(GameExistence.EXISTS_BUT_ALTERED);
@@ -311,10 +312,10 @@ describe("GamesService", () => {
     it("should return a random game", async () => {
       const mockGame = createMockGame();
       const mockQb = {
-        setFindOptions: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        getOneOrFail: jest.fn().mockResolvedValue({ id: 1 }),
+        setFindOptions: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        getOneOrFail: vi.fn().mockResolvedValue({ id: 1 }),
       };
       gamesRepository.createQueryBuilder.mockReturnValue(mockQb as any);
       gamesRepository.findOneOrFail.mockResolvedValue(mockGame);

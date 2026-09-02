@@ -7,33 +7,35 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
+import lodash from "lodash";
 import {
-  FindManyOptions,
-  FindOneOptions,
+  type DeepPartial,
+  type FindManyOptions,
+  type FindOneOptions,
   IsNull,
   LessThanOrEqual,
   Or,
   Repository,
 } from "typeorm";
-
-import { isEmpty, kebabCase, toLower } from "lodash";
 import {
-  FindOptions,
+  type FindOptions,
   toFindOptionsRelations,
   toFindOptionsSelect,
-} from "../../globals";
-import { logGamevaultGame } from "../../logging";
-import { DeveloperMetadata } from "../metadata/developers/developer.metadata.entity";
-import { GameMetadata } from "../metadata/games/game.metadata.entity";
-import { GameMetadataService } from "../metadata/games/game.metadata.service";
-import { GenreMetadata } from "../metadata/genres/genre.metadata.entity";
-import { MetadataService } from "../metadata/metadata.service";
-import { PublisherMetadata } from "../metadata/publishers/publisher.metadata.entity";
-import { TagMetadata } from "../metadata/tags/tag.metadata.entity";
-import { GameVersion } from "./game-version.entity";
-import { GamevaultGame } from "./gamevault-game.entity";
-import { GameExistence } from "./models/game-existence.enum";
-import { UpdateGameDto } from "./models/update-game.dto";
+} from "../../globals.js";
+import { logGamevaultGame } from "../../logging.js";
+import { DeveloperMetadata } from "../metadata/developers/developer.metadata.entity.js";
+import { GameMetadata } from "../metadata/games/game.metadata.entity.js";
+import { GameMetadataService } from "../metadata/games/game.metadata.service.js";
+import { GenreMetadata } from "../metadata/genres/genre.metadata.entity.js";
+import { MetadataService } from "../metadata/metadata.service.js";
+import { PublisherMetadata } from "../metadata/publishers/publisher.metadata.entity.js";
+import { TagMetadata } from "../metadata/tags/tag.metadata.entity.js";
+import { GameVersion } from "./game-version.entity.js";
+import { GamevaultGame } from "./gamevault-game.entity.js";
+import { GameExistence } from "./models/game-existence.enum.js";
+import { type UpdateGameDto } from "./models/update-game.dto.js";
+
+const { kebabCase, toLower } = lodash;
 
 @Injectable()
 export class GamesService {
@@ -53,7 +55,8 @@ export class GamesService {
     @InjectRepository(GameVersion)
     private readonly gameVersionRepository: Repository<GameVersion>,
     @Inject(forwardRef(() => MetadataService))
-    private readonly metadataService: MetadataService,
+    // Cyclic service reference (ESM): intentionally loosely typed to avoid design:paramtypes TDZ
+    private readonly metadataService: any,
     @Inject(forwardRef(() => GameMetadataService))
     private readonly gameMetadataService: GameMetadataService,
   ) {}
@@ -68,6 +71,10 @@ export class GamesService {
         relationLoadStrategy: "query",
       };
 
+      // Fork (9daff5c): relation loading is OPT-IN here. Upstream loads the
+      // full defaultRelations graph with eager sub-relations on every call;
+      // during an index of 5129 games that exhausted an 8GB heap. Callers that
+      // genuinely need relations pass loadRelations explicitly.
       if (options.loadRelations === true) {
         findParameters.relations = this.defaultRelations;
         findParameters.loadEagerRelations = true;
@@ -91,6 +98,8 @@ export class GamesService {
       }
 
       if (options.filterByAge) {
+        // The where-clause below filters on metadata, so that relation must be
+        // loaded even when the caller asked for no relations at all.
         if (!options.loadRelations) {
           findParameters.relations = toFindOptionsRelations<GamevaultGame>([
             "metadata",
@@ -133,7 +142,8 @@ export class GamesService {
           options.loadRelations,
         );
     } else {
-      // Fork: without this, every find() eager-loads the full relation graph.
+      // Fork (19cda31): without this, every find() eager-loads the full
+      // relation graph — checkIntegrity() calls it across the whole library.
       findParameters.loadEagerRelations = false;
     }
 
@@ -210,6 +220,8 @@ export class GamesService {
     // Finds the game by ID
     const game = await this.findOneByGameIdOrFail(id, {
       loadDeletedEntities: true,
+      // Fork: relation loading is opt-in (see findOneByGameIdOrFail); this
+      // method mutates metadata/user_metadata so it needs the full graph.
       loadRelations: true,
     });
 
@@ -239,7 +251,8 @@ export class GamesService {
         game: logGamevaultGame(game),
         user_metadata: dto.user_metadata,
       });
-      const updatedUserMetadata = game.user_metadata || new GameMetadata();
+      const updatedUserMetadata: DeepPartial<GameMetadata> =
+        game.user_metadata || new GameMetadata();
 
       updatedUserMetadata.id = updatedUserMetadata.id || undefined;
       updatedUserMetadata.provider_slug = "user";
@@ -345,8 +358,9 @@ export class GamesService {
         updatedUserMetadata.url_gameplays = dto.user_metadata.url_gameplays;
       }
 
-      if (!isEmpty(dto.user_metadata.tags)) {
-        updatedUserMetadata.tags = dto.user_metadata.tags.map((tag) => {
+      const tags = dto.user_metadata.tags;
+      if (tags?.length) {
+        updatedUserMetadata.tags = tags.map((tag) => {
           return {
             provider_slug: "user",
             provider_data_id: kebabCase(tag),
@@ -355,8 +369,9 @@ export class GamesService {
         });
       }
 
-      if (!isEmpty(dto.user_metadata.genres)) {
-        updatedUserMetadata.genres = dto.user_metadata.genres.map((genre) => {
+      const genres = dto.user_metadata.genres;
+      if (genres?.length) {
+        updatedUserMetadata.genres = genres.map((genre) => {
           return {
             provider_slug: "user",
             provider_data_id: kebabCase(genre),
@@ -365,28 +380,26 @@ export class GamesService {
         });
       }
 
-      if (!isEmpty(dto.user_metadata.developers)) {
-        updatedUserMetadata.developers = dto.user_metadata.developers.map(
-          (developer) => {
-            return {
-              provider_slug: "user",
-              provider_data_id: kebabCase(developer),
-              name: developer,
-            } as DeveloperMetadata;
-          },
-        );
+      const developers = dto.user_metadata.developers;
+      if (developers?.length) {
+        updatedUserMetadata.developers = developers.map((developer) => {
+          return {
+            provider_slug: "user",
+            provider_data_id: kebabCase(developer),
+            name: developer,
+          } as DeveloperMetadata;
+        });
       }
 
-      if (!isEmpty(dto.user_metadata.publishers)) {
-        updatedUserMetadata.publishers = dto.user_metadata.publishers.map(
-          (publisher) => {
-            return {
-              provider_slug: "user",
-              provider_data_id: kebabCase(publisher),
-              name: publisher,
-            } as PublisherMetadata;
-          },
-        );
+      const publishers = dto.user_metadata.publishers;
+      if (publishers?.length) {
+        updatedUserMetadata.publishers = publishers.map((publisher) => {
+          return {
+            provider_slug: "user",
+            provider_data_id: kebabCase(publisher),
+            name: publisher,
+          } as PublisherMetadata;
+        });
       }
 
       game.user_metadata =
@@ -418,7 +431,7 @@ export class GamesService {
   /** Checks if a game exists in the database. */
   public async checkIfExistsInDatabase(
     game: GamevaultGame,
-  ): Promise<[GameExistence, GamevaultGame]> {
+  ): Promise<[GameExistence, GamevaultGame | undefined]> {
     if (!game.file_path || !game.title) {
       throw new InternalServerErrorException(
         game,
@@ -426,8 +439,8 @@ export class GamesService {
       );
     }
 
-    // Fork: dupe-checking runs once per indexed file, so it must not pull the
-    // full defaultRelations graph (progresses, progresses.user,
+    // Fork (9daff5c): dupe-checking runs once per indexed file, so it must not
+    // pull the full defaultRelations graph (progresses, progresses.user,
     // bookmarked_users, all metadata) — that was a primary OOM source.
     // "versions" is required: it is eager on the entity and this method reads
     // foundGame.versions below, so it must be requested explicitly now that
@@ -454,16 +467,16 @@ export class GamesService {
     }
 
     if (!foundGame) {
-      foundGame = await this.gamesRepository.findOne({
-        relationLoadStrategy: "query",
-        where: {
-          file_path: game.file_path,
-        },
-        loadEagerRelations: false,
-        relations: indexingRelations,
-        withDeleted: true,
-      });
-
+      foundGame =
+        (await this.gamesRepository.findOne({
+          relationLoadStrategy: "query",
+          where: {
+            file_path: game.file_path,
+          },
+          loadEagerRelations: false,
+          relations: indexingRelations,
+          withDeleted: true,
+        })) ?? undefined;
       if (foundGame) {
         this.logger.debug({
           message: "Matched indexed game by legacy game file path.",
@@ -593,11 +606,11 @@ export class GamesService {
       );
     }
     if (
-      (matchedVersion?.size ?? foundGame.size).toString() !=
-      game.size.toString()
+      (matchedVersion?.size ?? foundGame.size ?? 0).toString() !=
+      (game.size ?? 0).toString()
     ) {
       differences.push(
-        `size: ${(matchedVersion?.size ?? foundGame.size).toString()} -> ${game.size}`,
+        `size: ${(matchedVersion?.size ?? foundGame.size ?? 0).toString()} -> ${game.size}`,
       );
     }
 

@@ -27,46 +27,47 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Response } from "express";
+import { type Response } from "express";
+import lodash from "lodash";
 import {
   FilterOperator,
   Paginate,
-  PaginateQuery,
-  Paginated,
   PaginationType,
   paginate,
+  type PaginateQuery,
+  type Paginated,
 } from "nestjs-paginate";
 import { In, Not, Repository } from "typeorm";
 
 import { FileInterceptor } from "@nestjs/platform-express";
 import bytes from "bytes";
-import { isArray } from "lodash";
-import { FilterSuffix, addFilter } from "nestjs-paginate/lib/filter";
 import {
   parseFilterExpression,
   type FilterExpression,
-} from "nestjs-paginate/lib/filter-expression";
-import configuration from "../../configuration";
-import { DisableApiIf } from "../../decorators/disable-api-if.decorator";
-import { MinimumRole } from "../../decorators/minimum-role.decorator";
-import { PaginateQueryOptions } from "../../decorators/pagination.decorator";
+} from "nestjs-paginate/lib/filter-expression.js";
+import { FilterSuffix, addFilter } from "nestjs-paginate/lib/filter.js";
+import configuration from "../../configuration.js";
+import { DisableApiIf } from "../../decorators/disable-api-if.decorator.js";
+import { MinimumRole } from "../../decorators/minimum-role.decorator.js";
+import { PaginateQueryOptions } from "../../decorators/pagination.decorator.js";
 import {
   ApiOkResponsePaginated,
   appendPaginateFilterExpression,
   toFindOptionsRelations,
-} from "../../globals";
-import { GameMetadata } from "../metadata/games/game.metadata.entity";
-import { OtpService } from "../otp/otp.service";
-import { State } from "../progresses/models/state.enum";
-import { Progress } from "../progresses/progress.entity";
-import { GamevaultUser } from "../users/gamevault-user.entity";
-import { Role } from "../users/models/role.enum";
-import { UsersService } from "../users/users.service";
-import { FilesService } from "./files.service";
-import { GamesService } from "./games.service";
-import { GamevaultGame } from "./gamevault-game.entity";
-import { GameIdDto } from "./models/game-id.dto";
-import { UpdateGameDto } from "./models/update-game.dto";
+} from "../../globals.js";
+import { GameMetadata } from "../metadata/games/game.metadata.entity.js";
+import { OtpService } from "../otp/otp.service.js";
+import { State } from "../progresses/models/state.enum.js";
+import { Progress } from "../progresses/progress.entity.js";
+import { GamevaultUser } from "../users/gamevault-user.entity.js";
+import { Role } from "../users/models/role.enum.js";
+import { UsersService } from "../users/users.service.js";
+import { FilesService } from "./files.service.js";
+import { GamesService } from "./games.service.js";
+import { GamevaultGame } from "./gamevault-game.entity.js";
+import { type GameIdDto } from "./models/game-id.dto.js";
+import { UpdateGameDto } from "./models/update-game.dto.js";
+const { isArray } = lodash;
 
 const metadataRelationNameFilters = {
   "metadata.genres.name": "genres.name",
@@ -143,8 +144,16 @@ export class GamesController {
       new ParseFilePipe({
         validators: [
           new MaxFileSizeValidator({
-            maxSize: configuration.GAMES.MAX_UPLOAD_SIZE,
-            message: `File exceeds maximum allowed upload size of ${bytes(configuration.GAMES.MAX_UPLOAD_SIZE, { unit: "GB", thousandsSeparator: "." })}.`,
+            maxSize:
+              configuration.GAMES.MAX_UPLOAD_SIZE ??
+              bytes("100gb") ??
+              Number.MAX_SAFE_INTEGER,
+            message: `File exceeds maximum allowed upload size of ${bytes(
+              configuration.GAMES.MAX_UPLOAD_SIZE ??
+                bytes("100gb") ??
+                Number.MAX_SAFE_INTEGER,
+              { unit: "GB", thousandsSeparator: "." },
+            )}.`,
           }),
         ],
       }),
@@ -228,15 +237,15 @@ export class GamesController {
 
         const excludedGameIds = playedProgresses
           .filter((p) => p.game != null)
-          .map((p) => p.game.id);
+          .map((p) => p.game!.id);
 
         if (excludedGameIds.length > 0) {
           unplayedWhereCondition = { id: Not(In(excludedGameIds)) };
         }
 
         // Remove progress filters — handled by the pre-query above
-        delete query.filter["progresses.state"];
-        delete query.filter["progresses.user.id"];
+        delete query.filter?.["progresses.state"];
+        delete query.filter?.["progresses.user.id"];
       } else {
         relationPaths.push("progresses", "progresses.user");
       }
@@ -291,7 +300,7 @@ export class GamesController {
         "metadata.average_playtime",
         "metadata.age_rating",
         "metadata.rating",
-      ],
+      ] as any,
       loadEagerRelations: false,
       searchableColumns: [
         "id",
@@ -370,14 +379,8 @@ export class GamesController {
       Number(params.game_id),
       {
         loadDeletedEntities: true,
-        // Fork: relation loading is opt-in, so this is required — without it
-        // game.versions below is undefined and the response loses its versions.
-        // TODO(memory): `true` pulls the whole defaultRelations graph
-        // (progresses, progresses.user, bookmarked_users, all metadata) on a
-        // per-request hot path. Check whether a narrowed list is enough here —
-        // the filter below only needs "versions", but the endpoint's response
-        // contract may expose the other relations to clients. Verify against
-        // the GamevaultGame API shape before narrowing.
+        // Fork (9daff5c): relation loading is opt-in in findOneByGameIdOrFail;
+        // this is the API response body, which must carry the full graph.
         loadRelations: true,
         filterByAge: await this.usersService.findUserAgeByUsername(
           request.user.username,
@@ -493,8 +496,9 @@ export class GamesController {
         direction: sortByEarlyAccess[1],
       });
 
-      query.sortBy.push(["metadata.early_access", sortByEarlyAccess[1]]);
-      delete query.sortBy[query.sortBy.indexOf(sortByEarlyAccess)];
+      const sortBy = (query.sortBy ??= []);
+      sortBy.push(["metadata.early_access", sortByEarlyAccess[1]]);
+      delete sortBy[sortBy.indexOf(sortByEarlyAccess)];
     }
 
     // Release Date
@@ -519,8 +523,9 @@ export class GamesController {
         direction: sortByReleaseDate[1],
       });
 
-      query.sortBy.push(["metadata.release_date", sortByReleaseDate[1]]);
-      delete query.sortBy[query.sortBy.indexOf(sortByReleaseDate)];
+      const sortBy = (query.sortBy ??= []);
+      sortBy.push(["metadata.release_date", sortByReleaseDate[1]]);
+      delete sortBy[sortBy.indexOf(sortByReleaseDate)];
     }
 
     return query;

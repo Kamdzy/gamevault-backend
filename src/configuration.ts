@@ -3,12 +3,14 @@ import bytes from "bytes";
 import { createHash, randomBytes } from "crypto";
 import * as dotenv from "dotenv";
 import { existsSync } from "fs";
-import { readFileSync } from "fs-extra";
-import { toLower } from "lodash";
+import fsExtra from "fs-extra";
+import lodash from "lodash";
 import { join } from "path";
 import { parse as parseYaml } from "yaml";
-import packageJson from "../package.json";
-import globals from "./globals";
+import packageJson from "../package.json" with { type: "json" };
+import globals from "./globals.js";
+const { readFileSync } = fsExtra;
+const { toLower } = lodash;
 
 dotenv.config();
 
@@ -42,7 +44,7 @@ function getYamlConfiguration(): Record<string, unknown> | null {
       throw new Error("Configuration root must be a YAML mapping/object.");
     } catch (error) {
       throw new Error(
-        `Failed to parse YAML configuration at \"${yamlPath}\": ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to parse YAML configuration at "${yamlPath}": ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -136,7 +138,7 @@ function resolveEnv(name: string): string | undefined {
 }
 
 function parseBooleanEnvVariable(
-  environmentVariable: string,
+  environmentVariable: string | undefined,
   defaultCase: boolean = false,
 ): boolean {
   switch (toLower(environmentVariable)) {
@@ -159,12 +161,15 @@ function parseBooleanEnvVariable(
   }
 }
 
-function parsePath(environmentVariable: string, defaultPath: string) {
+function parsePath(
+  environmentVariable: string | undefined,
+  defaultPath: string,
+) {
   return environmentVariable?.replace(/\/$/, "") || defaultPath;
 }
 
 function parseList(
-  environmentVariable: string,
+  environmentVariable: string | undefined,
   defaultList: string[] = [],
 ): string[] {
   return environmentVariable
@@ -173,7 +178,7 @@ function parseList(
 }
 
 function parseNumber(
-  environmentVariable: string,
+  environmentVariable: string | undefined,
   defaultValue?: number,
 ): number | undefined {
   const number = Number(environmentVariable);
@@ -184,7 +189,7 @@ function parseNumber(
 }
 
 function parseKibibytesToBytes(
-  environmentVariable: string,
+  environmentVariable: string | undefined,
   defaultValue?: number,
 ): number | undefined {
   const bytes = Number(environmentVariable) * 1024;
@@ -195,7 +200,7 @@ function parseKibibytesToBytes(
 }
 
 function parseRegExp(
-  environmentVariable: string,
+  environmentVariable: string | undefined,
   defaultValue?: RegExp,
 ): RegExp | undefined {
   return environmentVariable ? RegExp(environmentVariable) : defaultValue;
@@ -210,10 +215,10 @@ function safeHash(value: string | undefined): string | null {
 
 export function getMaxBodySizeInBytes() {
   return Math.max(
-    bytes("10mb"),
-    configuration.MEDIA.MAX_SIZE,
-    configuration.SAVEFILES.MAX_SIZE,
-    configuration.GAMES.MAX_UPLOAD_SIZE,
+    bytes("10mb") ?? 0,
+    configuration.MEDIA.MAX_SIZE ?? 0,
+    configuration.SAVEFILES.MAX_SIZE ?? 0,
+    configuration.GAMES.MAX_UPLOAD_SIZE ?? 0,
   );
 }
 

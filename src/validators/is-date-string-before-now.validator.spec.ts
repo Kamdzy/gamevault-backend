@@ -1,9 +1,9 @@
 import { validate } from "class-validator";
-import { IsDateStringBeforeNow } from "./is-date-string-before-now.validator";
+import { IsDateStringBeforeNow } from "./is-date-string-before-now.validator.js";
 
 class TestDto {
   @IsDateStringBeforeNow()
-  date: string;
+  date!: string;
 }
 
 describe("IsDateStringBeforeNow", () => {

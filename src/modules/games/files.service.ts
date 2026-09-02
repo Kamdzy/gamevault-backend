@@ -8,45 +8,40 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { randomBytes } from "crypto";
-import { Response } from "express";
-import {
-  Stats,
-  access,
-  constants,
-  createReadStream,
-  pathExists,
-  rm,
-  stat,
-  writeFile,
-} from "fs-extra";
-import { debounce, toLower } from "lodash";
-import { add, list } from "node-7z";
+import { type Response } from "express";
+import type { Stats } from "fs-extra";
+import fsExtra from "fs-extra";
+import lodash from "lodash";
+import node7z from "node-7z";
 import path, { basename } from "path";
 import { from, lastValueFrom } from "rxjs";
 import { mergeMap } from "rxjs/operators";
 import filenameSanitizer from "sanitize-filename";
-import { Readable } from "stream";
+import { type Readable } from "stream";
 import { Throttle } from "stream-throttle";
 import { IsNull, Not, Repository } from "typeorm";
 import unidecode from "unidecode";
+const { access, constants, createReadStream, pathExists, rm, stat, writeFile } =
+  fsExtra;
+const { debounce, toLower } = lodash;
+const { add, list } = node7z;
 
 import { Cron, SchedulerRegistry } from "@nestjs/schedule";
-import configuration from "../../configuration";
-import globals, { toFindOptionsRelations } from "../../globals";
-import { logGamevaultGame } from "../../logging";
-import { MetadataService } from "../metadata/metadata.service";
-import { GameVersion } from "./game-version.entity";
-import mock from "./games.mock";
-import { GamesService } from "./games.service";
-import { GamevaultGame } from "./gamevault-game.entity";
-import { File } from "./models/file.model";
-import { GameExistence } from "./models/game-existence.enum";
-import { GameType } from "./models/game-type.enum";
-import { RangeHeader } from "./models/range-header.model";
+import configuration from "../../configuration.js";
+import globals, { toFindOptionsRelations } from "../../globals.js";
+import { logGamevaultGame } from "../../logging.js";
+import { MetadataService } from "../metadata/metadata.service.js";
+import { GameVersion } from "./game-version.entity.js";
+import { GamesService } from "./games.service.js";
+import { GamevaultGame } from "./gamevault-game.entity.js";
+import { type File } from "./models/file.model.js";
+import { GameExistence } from "./models/game-existence.enum.js";
+import { GameType } from "./models/game-type.enum.js";
+import { type RangeHeader } from "./models/range-header.model.js";
 import {
   selectDefaultGameVersion,
   sortGameVersions,
-} from "./version-selection.util";
+} from "./version-selection.util.js";
 
 @Injectable()
 export class FilesService implements OnApplicationBootstrap {
@@ -55,7 +50,13 @@ export class FilesService implements OnApplicationBootstrap {
     configuration.GAMES.SUPPORTED_FILE_FORMATS.map((f) => toLower(f)),
   );
 
+  // Fork (9daff5c): re-entrancy guard so overlapping cron ticks skip instead
+  // of stacking two concurrent full indexes.
   private isIndexingRunning = false;
+  // Fork (653525c): starts false so indexAllFiles() is a no-op until the
+  // indexer worker thread finishes its initial pass. Without this gate the
+  // worker's index and a cron re-index ran simultaneously, doubling V8 heap
+  // and hitting the container memory limit. main.ts releases it on worker exit.
   private _initialIndexComplete = false;
 
   public get initialIndexComplete(): boolean {
@@ -110,13 +111,27 @@ export class FilesService implements OnApplicationBootstrap {
       .on("error", (error) =>
         this.logger.error({ message: "Error in Filewatcher.", error }),
       );
+    // Fork (2e9c4bb): deliberately NO indexAllFiles() here. The initial index
+    // runs in the indexer worker thread spawned by main.ts after the server is
+    // listening, so it cannot block the main event loop. Restoring this call
+    // would run a full index on the event loop *and* in the worker at once.
   }
 
-  // Start initial full index on demand (moved to be invoked after server listen)
+  /**
+   * Fork: entry point for the indexer worker thread.
+   *
+   * This deliberately bypasses the _initialIndexComplete gate: this IS the
+   * initial index that the gate exists to wait for. Routing it through
+   * indexAllFiles() made the worker a no-op, because the worker runs in its own
+   * thread with its own FilesService instance whose flag is never set (only
+   * main.ts, in the main process, calls markInitialIndexComplete()). The result
+   * was that every index ran on the main event loop via the cron instead — the
+   * exact thing the worker was introduced to avoid.
+   */
   public async startIndexing(): Promise<void> {
     try {
       this.logger.log({ message: "Starting initial file index (background)." });
-      await this.indexAllFiles();
+      await this.runIndex();
       this.logger.log({ message: "Initial file index finished." });
     } catch (error) {
       this.logger.error({ message: "Initial file index failed.", error });
@@ -124,15 +139,17 @@ export class FilesService implements OnApplicationBootstrap {
   }
 
   @Cron(
-    `*/${configuration.GAMES.INDEX_INTERVAL_IN_MINUTES > 0 ? configuration.GAMES.INDEX_INTERVAL_IN_MINUTES : 1} * * * *`,
+    `*/${(configuration.GAMES.INDEX_INTERVAL_IN_MINUTES ?? 60) > 0 ? (configuration.GAMES.INDEX_INTERVAL_IN_MINUTES ?? 60) : 1} * * * *`,
     {
       disabled:
-        configuration.GAMES.INDEX_INTERVAL_IN_MINUTES <= 0 ||
+        (configuration.GAMES.INDEX_INTERVAL_IN_MINUTES ?? 60) <= 0 ||
         configuration.TESTING.MOCK_FILES,
     },
   )
   /** Scans the filesystem for all games and indexes them. */
   public async indexAllFiles() {
+    // Fork (653525c): the cron must not run until the worker's initial index
+    // has finished — two concurrent full indexes was a reliable OOM.
     if (!this._initialIndexComplete) {
       this.logger.debug({
         message:
@@ -141,6 +158,16 @@ export class FilesService implements OnApplicationBootstrap {
       return;
     }
 
+    await this.runIndex();
+  }
+
+  /**
+   * Fork: the actual index pass, shared by the cron entry point
+   * (indexAllFiles, gated) and the worker entry point (startIndexing, ungated).
+   * The re-entrancy guard lives here so neither caller can stack runs.
+   */
+  private async runIndex(): Promise<void> {
+    // Fork (9daff5c): overlapping runs skip rather than stack.
     if (this.isIndexingRunning) {
       this.logger.warn({
         message: "Skipping file index — previous run is still in progress.",
@@ -150,6 +177,8 @@ export class FilesService implements OnApplicationBootstrap {
 
     this.isIndexingRunning = true;
     try {
+      // Fork (19cda31): heap diagnostics at each stage. These are deliberate
+      // instrumentation from the OOM investigation — not noise.
       const heapMB = () =>
         Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
 
@@ -369,7 +398,7 @@ export class FilesService implements OnApplicationBootstrap {
 
     try {
       // Check if the game already exists in the database
-      const existingGameTuple: [GameExistence, GamevaultGame] =
+      const existingGameTuple: [GameExistence, GamevaultGame | undefined] =
         await this.gamesService.checkIfExistsInDatabase(gameToIndex);
       const existingGame = existingGameTuple[1];
 
@@ -394,7 +423,9 @@ export class FilesService implements OnApplicationBootstrap {
           // Keep legacy rows normalized while preserving current default file path.
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
           this.metadataService.addUpdateMetadataJob(
-            (await this.upsertIndexedVersion(existingGame.id, gameToIndex)).id,
+            // Fork (2d99061): the metadata queue holds IDs, not entities —
+            // holding entities pinned thousands of hydrated games in heap.
+            (await this.upsertIndexedVersion(existingGame!.id, gameToIndex)).id,
           );
           break;
         }
@@ -404,6 +435,8 @@ export class FilesService implements OnApplicationBootstrap {
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
           const savedGame = await this.gamesService.save(gameToIndex);
           this.metadataService.addUpdateMetadataJob(
+            // Fork (2d99061): the metadata queue holds IDs, not entities —
+            // holding entities pinned thousands of hydrated games in heap.
             (await this.upsertIndexedVersion(savedGame.id, gameToIndex)).id,
           );
           break;
@@ -411,9 +444,13 @@ export class FilesService implements OnApplicationBootstrap {
 
         case GameExistence.EXISTS_BUT_DELETED_IN_DATABASE: {
           // Restore soft-deleted game and add/update the indexed version
-          const restoredGame = await this.gamesService.restore(existingGame.id);
+          const restoredGame = await this.gamesService.restore(
+            existingGame!.id,
+          );
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
           this.metadataService.addUpdateMetadataJob(
+            // Fork (2d99061): the metadata queue holds IDs, not entities —
+            // holding entities pinned thousands of hydrated games in heap.
             (await this.upsertIndexedVersion(restoredGame.id, gameToIndex)).id,
           );
           break;
@@ -423,7 +460,9 @@ export class FilesService implements OnApplicationBootstrap {
           // Update or add a version for an altered duplicate
           gameToIndex.type = await this.detectType(gameToIndex.file_path);
           this.metadataService.addUpdateMetadataJob(
-            (await this.upsertIndexedVersion(existingGame.id, gameToIndex)).id,
+            // Fork (2d99061): the metadata queue holds IDs, not entities —
+            // holding entities pinned thousands of hydrated games in heap.
+            (await this.upsertIndexedVersion(existingGame!.id, gameToIndex)).id,
           );
           break;
         }
@@ -460,11 +499,28 @@ export class FilesService implements OnApplicationBootstrap {
 
     const gamePatch = Object.assign(new GamevaultGame(), { id });
     this.applyVersionToGame(gamePatch, selectedVersion);
-    gamePatch.title = indexedGame.title;
-    gamePatch.sort_title = this.gamesService.generateSortTitle(
-      indexedGame.title,
-    );
     gamePatch.download_count = gameToUpdate.download_count;
+
+    // Only (re)derive title/sort title from the file name when the user has
+    // specifically set them. A user metadata row may exist for unrelated edits
+    // (e.g. description/cover only), so preserve only what was actually
+    // overridden; a customized sort_title is detected by comparing it against
+    // the auto-generated value for the current title.
+    const userSetTitle = !!gameToUpdate.user_metadata?.title?.trim();
+    const autoSortTitle = this.gamesService.generateSortTitle(
+      gameToUpdate.title ?? "",
+    );
+    const hasCustomSortTitle =
+      !!gameToUpdate.sort_title && gameToUpdate.sort_title !== autoSortTitle;
+
+    if (!userSetTitle) {
+      gamePatch.title = indexedGame.title;
+    }
+    if (!hasCustomSortTitle) {
+      gamePatch.sort_title = this.gamesService.generateSortTitle(
+        indexedGame.title ?? "",
+      );
+    }
 
     // Persist only scalar game fields to avoid relation graph side effects.
     await this.gamesService.save(gamePatch);
@@ -627,9 +683,14 @@ export class FilesService implements OnApplicationBootstrap {
    * Extracts the game release year from a given file path string
    * using a regular expression.
    */
-  private extractReleaseYear(filePath: string): Date {
+  private extractReleaseYear(filePath: string): Date | undefined {
     try {
-      return new Date(RegExp(/\((\d{4})\)/).exec(filePath)[1]);
+      const match = /\((\d{4})\)/.exec(filePath);
+      if (!match?.[1]) {
+        return undefined;
+      }
+      const parsedDate = new Date(match[1]);
+      return Number.isNaN(parsedDate.getTime()) ? undefined : parsedDate;
     } catch {
       return undefined;
     }
@@ -899,6 +960,7 @@ export class FilesService implements OnApplicationBootstrap {
   private async checkIntegrity(
     filesInFileSystem?: File[],
   ): Promise<GamevaultGame[]> {
+    // Fork (19cda31): heap diagnostics around the whole-library load.
     const heapMB = () =>
       Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
 
@@ -1111,7 +1173,9 @@ export class FilesService implements OnApplicationBootstrap {
    */
   private async readAllFiles(): Promise<File[]> {
     try {
-      if (configuration.TESTING.MOCK_FILES) return mock;
+      if (configuration.TESTING.MOCK_FILES) {
+        return (await import("../../testing/games.mock.js")).default;
+      }
 
       const { readdirp } = await import("readdirp");
 
@@ -1255,7 +1319,9 @@ export class FilesService implements OnApplicationBootstrap {
   ): Promise<StreamableFile> {
     // Set the download speed limit if provided, otherwise use the default value from configuration.
     speedlimitHeader =
-      speedlimitHeader || configuration.SERVER.MAX_DOWNLOAD_BANDWIDTH_IN_KBPS;
+      speedlimitHeader ??
+      configuration.SERVER.MAX_DOWNLOAD_BANDWIDTH_IN_KBPS ??
+      0;
     speedlimitHeader *= 1024;
 
     // Find the game by ID.
@@ -1345,7 +1411,7 @@ export class FilesService implements OnApplicationBootstrap {
         unidecode(downloadFilename),
       )}"`,
       length: range.size,
-      type: mime.getType(fileDownloadPath),
+      type: mime.getType(fileDownloadPath) ?? undefined,
     });
   }
 

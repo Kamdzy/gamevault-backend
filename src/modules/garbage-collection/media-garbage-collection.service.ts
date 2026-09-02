@@ -2,17 +2,19 @@ import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import { isUUID } from "class-validator";
-import { readdir, remove } from "fs-extra";
+import fsExtra from "fs-extra";
+import lodash from "lodash";
 import { join } from "path";
 import { Repository } from "typeorm";
+import configuration from "../../configuration.js";
+import { toFindOptionsRelations } from "../../globals.js";
+import { Media } from "../media/media.entity.js";
+import { MediaService } from "../media/media.service.js";
+import { GameMetadata } from "../metadata/games/game.metadata.entity.js";
+import { GamevaultUser } from "../users/gamevault-user.entity.js";
+const { readdir, remove } = fsExtra;
 
-import { uniq } from "lodash";
-import configuration from "../../configuration";
-import { toFindOptionsRelations } from "../../globals";
-import { Media } from "../media/media.entity";
-import { MediaService } from "../media/media.service";
-import { GameMetadata } from "../metadata/games/game.metadata.entity";
-import { GamevaultUser } from "../users/gamevault-user.entity";
+const { uniq } = lodash;
 
 @Injectable()
 export class MediaGarbageCollectionService implements OnApplicationBootstrap {
@@ -118,39 +120,40 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
     for (const { repository, relations } of entityMediaProperties) {
       const entities = await repository.find({
         withDeleted: true,
-        relations: toFindOptionsRelations<unknown>(relations),
+        relations: toFindOptionsRelations<Record<string, unknown>>(relations),
         loadEagerRelations: false,
         relationLoadStrategy: "query",
       });
       for (const entity of entities) {
         const foundMedia: Media[] = [];
+        const entityRecord = entity as unknown as Record<string, unknown>;
         /**
          * Loop through each property of the entity and check if it contains
          * media.
          */
         for (const relation of relations) {
-          if (Array.isArray(entity[relation])) {
+          if (Array.isArray(entityRecord[relation])) {
+            const relatedMedia = entityRecord[relation] as Media[];
             this.logger.debug({
-              message: `Found ${entity[relation].length} media entities in relation.`,
+              message: `Found ${relatedMedia.length} media entities in relation.`,
               entity: entity.constructor.name,
               entity_id: entity.id,
               entity_relation: relation,
-              media_ids: entity[relation].map((media: Media) => media.id),
-              media_paths: entity[relation].map(
-                (media: Media) => media.file_path,
-              ),
+              media_ids: relatedMedia.map((media) => media.id),
+              media_paths: relatedMedia.map((media) => media.file_path),
             });
-            foundMedia.push(...entity[relation]);
-          } else if (entity[relation]) {
+            foundMedia.push(...relatedMedia);
+          } else if (entityRecord[relation]) {
+            const media = entityRecord[relation] as Media;
             this.logger.debug({
               message: `Found 1 media entity in relation.`,
               entity: entity.constructor.name,
               entity_id: entity.id,
               entity_relation: relation,
-              media_id: entity[relation].id,
-              media_path: entity[relation].file_path,
+              media_id: media.id,
+              media_path: media.file_path,
             });
-            foundMedia.push(entity[relation]);
+            foundMedia.push(media);
           }
         }
         /**
@@ -159,7 +162,7 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
         mediaPaths.push(
           ...foundMedia
             .filter((media) => media.file_path)
-            .map((media) => media.file_path),
+            .map((media) => media.file_path ?? ""),
         );
       }
     }
@@ -189,7 +192,7 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
     // Filter out media that are not being used
     const uniqueUnusedMedia = uniq(
       uniqueAllMedia.filter(
-        (media) => !uniqueUsedMediaPaths.includes(media.file_path),
+        (media) => !uniqueUsedMediaPaths.includes(media.file_path ?? ""),
       ),
     );
 
@@ -231,7 +234,20 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
         recursive: false,
       })
     )
-      .filter((file) => file.isFile() && isUUID(file.name.substring(0, 35), 4))
+      // Fork: two changes to the line below.
+      //
+      // 1. substring(0, 36), not 35. A v4 UUID is 36 characters (8-4-4-4-12
+      //    plus four hyphens). Upstream's 35 truncates the final hex digit, so
+      //    isUUID() rejected EVERY file and this sweep silently deleted nothing
+      //    since it was introduced. Verified against the live media volume:
+      //    0/24097 files passed the old filter, 24096/24097 pass this one.
+      //
+      // 2. join against configuration.VOLUMES.MEDIA rather than file.parentPath.
+      //    readdir above is non-recursive, so parentPath is by construction the
+      //    directory we just passed in — reconstructing from the constant is the
+      //    direct expression and keeps this delete path off the Dirent path API,
+      //    which already broke once when Node replaced `.path` with `.parentPath`.
+      .filter((file) => file.isFile() && isUUID(file.name.substring(0, 36), 4))
       .map((file) => join(configuration.VOLUMES.MEDIA, file.name));
 
     let removedCount = 0;

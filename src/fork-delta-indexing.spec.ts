@@ -10,11 +10,12 @@
  */
 
 import { SchedulerRegistry } from "@nestjs/schedule";
-import { FilesService } from "./modules/games/files.service";
-import { GamesService } from "./modules/games/games.service";
-import { MetadataService } from "./modules/metadata/metadata.service";
+import type { MockInstance } from "vitest";
+import { FilesService } from "./modules/games/files.service.js";
+import { GamesService } from "./modules/games/games.service.js";
+import { MetadataService } from "./modules/metadata/metadata.service.js";
 
-jest.mock("./configuration", () => ({
+vi.mock("./configuration.js", () => ({
   __esModule: true,
   default: {
     TESTING: { MOCK_FILES: true },
@@ -32,45 +33,52 @@ jest.mock("./configuration", () => ({
   },
 }));
 
-jest.mock("./logging", () => ({
-  logGamevaultGame: jest.fn((g) => ({ id: g?.id, path: g?.file_path })),
+vi.mock("./logging.js", () => ({
+  logGamevaultGame: vi.fn((g) => ({ id: g?.id, path: g?.file_path })),
 }));
 
-jest.mock("fs-extra", () => ({
-  access: jest.fn(),
-  constants: { W_OK: 2 },
-  createReadStream: jest.fn(),
-  pathExists: jest.fn(),
-  rm: jest.fn(),
-  stat: jest.fn(),
-  writeFile: jest.fn(),
-}));
+// fs-extra is CommonJS. Since the ESM migration the source does
+// `import fsExtra from "fs-extra"` and destructures off the default, so the
+// mock must expose BOTH the named exports and a matching `default`.
+vi.mock("fs-extra", () => {
+  const mock = {
+    access: vi.fn(),
+    constants: { W_OK: 2 },
+    createReadStream: vi.fn(),
+    pathExists: vi.fn(),
+    readFileSync: vi.fn(() => ""),
+    rm: vi.fn(),
+    stat: vi.fn(),
+    writeFile: vi.fn(),
+  };
+  return { ...mock, default: mock };
+});
 
 describe("Fork delta: initial-index gate", () => {
   let service: FilesService;
   let gamesService: any;
-  let readAllFilesSpy: jest.SpyInstance;
+  let readAllFilesSpy: MockInstance;
 
   beforeEach(() => {
     gamesService = {
-      find: jest.fn().mockResolvedValue([]),
-      delete: jest.fn().mockResolvedValue(undefined),
+      find: vi.fn().mockResolvedValue([]),
+      delete: vi.fn().mockResolvedValue(undefined),
     };
     // Constructed through `any` so this file also compiles against pre-v17
     // trees, where FilesService took no GameVersion repository. The first three
     // arguments are identical in both arities.
     service = new (FilesService as any)(
       gamesService as unknown as GamesService,
-      { addUpdateMetadataJob: jest.fn() } as unknown as MetadataService,
-      { getCronJob: jest.fn() } as unknown as SchedulerRegistry,
-      { find: jest.fn().mockResolvedValue([]), softDelete: jest.fn() } as any,
+      { addUpdateMetadataJob: vi.fn() } as unknown as MetadataService,
+      { getCronJob: vi.fn() } as unknown as SchedulerRegistry,
+      { find: vi.fn().mockResolvedValue([]), softDelete: vi.fn() } as any,
     );
-    readAllFilesSpy = jest
+    readAllFilesSpy = vi
       .spyOn(service as any, "readAllFiles")
       .mockResolvedValue([]);
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   /**
    * The @Cron re-index must be inert until the worker thread reports it has
@@ -101,6 +109,35 @@ describe("Fork delta: initial-index gate", () => {
   /**
    * Re-entrancy guard: a slow index must not stack with the next cron tick.
    */
+  /**
+   * The worker thread runs in its own process with its own FilesService
+   * instance, so _initialIndexComplete is never set there — only main.ts, in
+   * the main process, calls markInitialIndexComplete(). Routing the worker
+   * through indexAllFiles() therefore made it a silent no-op and pushed every
+   * index onto the main thread's cron instead. startIndexing() must bypass the
+   * gate: it IS the initial index the gate exists to wait for.
+   *
+   * Mutation-verified: pointing startIndexing() back at indexAllFiles() makes
+   * this fail.
+   */
+  it("startIndexing bypasses the gate so the worker can actually index", async () => {
+    // Gate deliberately left closed, exactly as it is inside the worker.
+    expect(service.initialIndexComplete).toBe(false);
+
+    await service.startIndexing();
+
+    expect(readAllFilesSpy).toHaveBeenCalled();
+  });
+
+  /** The re-entrancy guard must still apply to the worker entry point. */
+  it("startIndexing still refuses to stack concurrent runs", async () => {
+    (service as any).isIndexingRunning = true;
+
+    await service.startIndexing();
+
+    expect(readAllFilesSpy).not.toHaveBeenCalled();
+  });
+
   it("skips a re-index while one is already running", async () => {
     service.markInitialIndexComplete();
 

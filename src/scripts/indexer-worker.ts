@@ -3,10 +3,10 @@ import "reflect-metadata";
 dotenv.config();
 
 import { NestFactory } from "@nestjs/core";
-import { AppModule } from "../app.module";
-import logger from "../logging";
-import { FilesService } from "../modules/games/files.service";
-import loadPlugins from "../plugin";
+import { AppModule } from "../app.module.js";
+import logger from "../logging.js";
+import { FilesService } from "../modules/games/files.service.js";
+import loadPlugins from "../plugin.js";
 
 async function run(): Promise<void> {
   try {
@@ -39,7 +39,11 @@ async function run(): Promise<void> {
     logger.log({ context: "Indexer", message: "Indexer (worker) started." });
 
     try {
-      await filesService.indexAllFiles();
+      // Must be startIndexing(), NOT indexAllFiles(). indexAllFiles() is gated
+      // on _initialIndexComplete, which is only ever set in the main process —
+      // calling it here made the worker silently no-op and pushed every index
+      // onto the main thread's cron instead.
+      await filesService.startIndexing();
       logger.log({ context: "Indexer", message: "Indexer (worker) finished." });
     } catch (err) {
       logger.error({

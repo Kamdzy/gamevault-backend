@@ -5,36 +5,38 @@ import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import {
   ExpressAdapter,
-  NestExpressApplication,
+  type NestExpressApplication,
 } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import compression from "compression";
 import cookieparser from "cookie-parser";
+import fsExtra from "fs-extra";
 import helmet from "helmet";
 import morgan from "morgan";
-import { FilesService } from "./modules/games/files.service";
 //import { AsyncApiDocumentBuilder, AsyncApiModule } from "nestjs-asyncapi";
 
 import { createHash } from "crypto";
-import express, { Response } from "express";
+import express, { type Request, type Response } from "express";
 import session from "express-session";
 import fs from "fs";
-import { readFileSync } from "fs-extra";
-import { createServer as createHttpServer } from "http";
 import { createServer as createHttpsServer } from "https";
 import path from "path";
 import { Worker } from "worker_threads";
-import { AppModule } from "./app.module";
+import { AppModule } from "./app.module.js";
 import configuration, {
   getCensoredConfiguration,
   getMaxBodySizeInBytes,
-} from "./configuration";
-import { LoggingExceptionFilter } from "./filters/http-exception.filter";
-import { default as logger, stream, default as winston } from "./logging";
-import { LegacyRoutesMiddleware } from "./middleware/legacy-routes.middleware";
-import loadPlugins from "./plugin";
+} from "./configuration.js";
+import { LoggingExceptionFilter } from "./filters/http-exception.filter.js";
+import logger, { stream } from "./logging.js";
+import { LegacyRoutesMiddleware } from "./middleware/legacy-routes.middleware.js";
+import { FilesService } from "./modules/games/files.service.js";
+import loadPlugins from "./plugin.js";
+const { readFileSync } = fsExtra;
 
 async function bootstrap(): Promise<void> {
+  let httpsServer: ReturnType<typeof createHttpsServer> | undefined;
+
   // Load Modules & Plugins
   const builtinModules = Reflect.getOwnMetadata("imports", AppModule);
   const pluginModules = await loadPlugins();
@@ -47,7 +49,7 @@ async function bootstrap(): Promise<void> {
     AppModule,
     new ExpressAdapter(server),
     {
-      logger: winston,
+      logger,
     },
   );
 
@@ -103,7 +105,8 @@ async function bootstrap(): Promise<void> {
   app.use(
     morgan(configuration.SERVER.REQUEST_LOG_FORMAT, {
       stream,
-      skip: (req) => req.url.includes("/status") || req.url.includes("/health"),
+      skip: (req) =>
+        !req.url || req.url.includes("/status") || req.url.includes("/health"),
     }),
   );
 
@@ -118,9 +121,6 @@ async function bootstrap(): Promise<void> {
 
   // Basepath
   app.setGlobalPrefix("api");
-
-  // Enable automatic HTTP Error Response Logging
-  app.useGlobalFilters(new LoggingExceptionFilter());
 
   // Provide API Specification
   if (configuration.WEB_UI.ENABLED) {
@@ -209,14 +209,14 @@ async function bootstrap(): Promise<void> {
   }
 
   // Redirect /health to /status
-  app.use("/api/health", (_req, res: Response) => {
+  app.use("/api/health", (_req: Request, res: Response) => {
     res.redirect(308, "/api/status");
   });
 
   await app.init();
 
-  // Start HTTP server
-  createHttpServer(server).listen(configuration.SERVER.PORT);
+  // Start HTTP server (Nest owns the http.Server here, so Socket.IO attaches to it)
+  await app.listen(configuration.SERVER.PORT ?? 8080);
 
   // Additionally start HTTPS server if enabled
   if (configuration.SERVER.HTTPS.ENABLED) {
@@ -238,9 +238,11 @@ async function bootstrap(): Promise<void> {
     if (configuration.SERVER.HTTPS.CA_CERT_PATH) {
       httpsOptions.ca = readFileSync(configuration.SERVER.HTTPS.CA_CERT_PATH);
     }
-    createHttpsServer(httpsOptions, server).listen(
-      configuration.SERVER.HTTPS.PORT,
+    httpsServer = createHttpsServer(
+      httpsOptions,
+      app.getHttpAdapter().getInstance(),
     );
+    httpsServer.listen(configuration.SERVER.HTTPS.PORT);
   }
 
   logger.log({
@@ -254,77 +256,117 @@ async function bootstrap(): Promise<void> {
     config: getCensoredConfiguration(),
   });
 
-  // Fire-and-forget: start initial file indexing in a worker thread so it
-  // cannot block the main event loop. Prefer compiled JS in dist, fallback
-  // to loading ts via ts-node in dev using an eval worker.
-  // The cron re-index is gated by FilesService._initialIndexComplete, which
-  // is set when the worker exits. If no worker is spawned, mark it complete
-  // immediately so the cron can still run.
+  // Fork (2e9c4bb + 653525c): run the initial file index in a worker thread so
+  // it cannot block the main event loop, and gate the @Cron re-index on its
+  // completion. FilesService._initialIndexComplete starts false and makes
+  // indexAllFiles() a no-op until markInitialIndexComplete() is called — that is
+  // what stops the worker's initial pass and a cron tick from running two full
+  // indexes concurrently, which was a reliable OOM.
+  //
+  // Every path out of this block MUST either spawn a worker (whose "exit"
+  // handler releases the gate) or release the gate itself. Otherwise re-indexing
+  // is silently disabled for the life of the process.
   if (!configuration.TESTING.MOCK_FILES) {
+    const compiledWorker = path.join(
+      process.cwd(),
+      "dist",
+      "src",
+      "scripts",
+      "indexer-worker.js",
+    );
+
+    // The worker is always emitted by `nest build` and `nest start --watch`
+    // (tsconfig includes src/**/*). If it is missing the build is broken and
+    // background indexing cannot run at all, so fail loudly instead of serving
+    // in a degraded state where games silently stop being indexed.
+    if (!fs.existsSync(compiledWorker)) {
+      logger.error({
+        context: "Initialization",
+        message:
+          "FATAL: compiled indexer worker is missing. The build is incomplete, " +
+          "so background indexing cannot start. Refusing to run degraded.",
+        expectedPath: compiledWorker,
+      });
+      await app.close();
+      process.exit(1);
+    }
+
     try {
-      const compiledWorker = path.join(
-        process.cwd(),
-        "dist",
-        "src",
-        "scripts",
-        "indexer-worker.js",
-      );
-      let worker: Worker | undefined;
-
-      if (fs.existsSync(compiledWorker)) {
-        worker = new Worker(compiledWorker);
-      } else {
-        // Dev fallback: require ts-node/register then run the TS worker file
-        const tsWorkerFile = path.join(
-          process.cwd(),
-          "src",
-          "scripts",
-          "indexer-worker.ts",
-        );
-        const code = `require('ts-node/register'); require(${JSON.stringify(tsWorkerFile)});`;
-        worker = new Worker(code, { eval: true });
-      }
-
-      if (worker) {
-        worker.unref();
-        worker.on("error", (err) => {
-          logger.error({
-            context: "Initialization",
-            message: "Indexer worker error.",
-            error: err,
-          });
+      const worker = new Worker(compiledWorker);
+      worker.unref();
+      worker.on("error", (error) => {
+        // A runtime failure inside the worker is not fatal to the API server:
+        // the "exit" handler below still releases the gate, so the cron
+        // re-index takes over on the next tick.
+        logger.error({
+          context: "Initialization",
+          message: "Indexer worker error.",
+          error,
         });
-        worker.on("exit", (code) => {
-          logger.log({
-            context: "Initialization",
-            message: `Indexer worker exited with code ${code}`,
-          });
-          try {
-            const filesService = app.get(FilesService);
-            filesService.markInitialIndexComplete();
-          } catch {
-            // App may have shut down before the worker exited
-          }
-        });
+      });
+      worker.on("exit", (code) => {
         logger.log({
           context: "Initialization",
-          message: "Triggered indexer worker thread.",
+          message: `Indexer worker exited with code ${code}`,
         });
-      }
+        try {
+          app.get(FilesService).markInitialIndexComplete();
+        } catch {
+          // App may have shut down before the worker exited.
+        }
+      });
+      logger.log({
+        context: "Initialization",
+        message: "Triggered indexer worker thread.",
+      });
     } catch (error) {
       logger.error({
         context: "Initialization",
-        message: "Failed to spawn indexer worker.",
+        message:
+          "FATAL: failed to spawn indexer worker. Refusing to run degraded.",
         error,
       });
-      app.get(FilesService).markInitialIndexComplete();
+      await app.close();
+      process.exit(1);
     }
   } else {
+    // TESTING_MOCK_FILES short-circuits indexing entirely; release the gate so
+    // the cron path behaves normally.
     app.get(FilesService).markInitialIndexComplete();
   }
+
+  // Graceful shutdown: stop accepting connections, drain in-flight requests
+  // (Nest 12 Express adapter) and close both servers before exiting.
+  let isShuttingDown = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    logger.log({
+      context: "Shutdown",
+      message: `Received ${signal}. Shutting down gracefully.`,
+    });
+    try {
+      await app.close();
+      if (httpsServer) {
+        await new Promise<void>((resolve) =>
+          httpsServer?.close(() => resolve()),
+        );
+      }
+    } catch (error) {
+      logger.error({
+        context: "Shutdown",
+        message: "Error during graceful shutdown.",
+        error,
+      });
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+  process.once("SIGINT", () => void shutdown("SIGINT"));
 }
 
-Error.stackTraceLimit = configuration.SERVER.STACK_TRACE_LIMIT;
+Error.stackTraceLimit = configuration.SERVER.STACK_TRACE_LIMIT ?? 10;
 bootstrap().catch((error) => {
   logger.error({ message: "A fatal error occured", error });
   throw error;

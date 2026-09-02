@@ -1,17 +1,18 @@
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Repository } from "typeorm";
-import configuration from "../../configuration";
-import { GamesService } from "../games/games.service";
-import { MediaService } from "../media/media.service";
-import { GamevaultUser } from "./gamevault-user.entity";
-import { Role } from "./models/role.enum";
-import { UsersService } from "./users.service";
+import type { Mocked } from "vitest";
+import configuration from "../../configuration.js";
+import { GamesService } from "../games/games.service.js";
+import { MediaService } from "../media/media.service.js";
+import { GamevaultUser } from "./gamevault-user.entity.js";
+import { Role } from "./models/role.enum.js";
+import { UsersService } from "./users.service.js";
 
 describe("UsersService", () => {
   let service: UsersService;
-  let userRepository: jest.Mocked<Repository<GamevaultUser>>;
-  let mediaService: jest.Mocked<MediaService>;
-  let gamesService: jest.Mocked<GamesService>;
+  let userRepository: Mocked<Repository<GamevaultUser>>;
+  let mediaService: Mocked<MediaService>;
+  let gamesService: Mocked<GamesService>;
 
   const createMockUser = (
     overrides: Partial<GamevaultUser> = {},
@@ -31,22 +32,22 @@ describe("UsersService", () => {
 
   beforeEach(() => {
     userRepository = {
-      findOneOrFail: jest.fn(),
-      findOne: jest.fn(),
-      find: jest.fn(),
-      save: jest.fn(),
-      softRemove: jest.fn(),
-      recover: jest.fn(),
-      count: jest.fn(),
-      createQueryBuilder: jest.fn(),
+      findOneOrFail: vi.fn(),
+      findOne: vi.fn(),
+      find: vi.fn(),
+      save: vi.fn(),
+      softRemove: vi.fn(),
+      recover: vi.fn(),
+      count: vi.fn(),
+      createQueryBuilder: vi.fn(),
     } as any;
 
     mediaService = {
-      findOneByMediaIdOrFail: jest.fn(),
+      findOneByMediaIdOrFail: vi.fn(),
     } as any;
 
     gamesService = {
-      findOneByGameIdOrFail: jest.fn(),
+      findOneByGameIdOrFail: vi.fn(),
     } as any;
 
     const testConfiguration = {
@@ -79,11 +80,11 @@ describe("UsersService", () => {
     });
 
     it("should return 0 for null birth date", () => {
-      expect(service.calculateAge(null)).toBe(0);
+      expect(service.calculateAge(null as unknown as Date)).toBe(0);
     });
 
     it("should return 0 for undefined birth date", () => {
-      expect(service.calculateAge(undefined)).toBe(0);
+      expect(service.calculateAge(undefined as unknown as Date)).toBe(0);
     });
 
     it("should return 0 for a birth date today", () => {
@@ -155,8 +156,8 @@ describe("UsersService", () => {
       });
       userRepository.findOneOrFail.mockResolvedValue(mockUser);
       const result = await service.findOneByUserIdOrFail(1);
-      expect(result.progresses).toHaveLength(1);
-      expect(result.progresses[0].id).toBe(1);
+      expect(result.progresses!).toHaveLength(1);
+      expect(result.progresses![0].id).toBe(1);
     });
   });
 
@@ -262,10 +263,10 @@ describe("UsersService", () => {
       userRepository.findOneOrFail.mockResolvedValue(mockUser);
       userRepository.recover.mockResolvedValue({
         ...mockUser,
-        deleted_at: null,
+        deleted_at: undefined,
       });
       const result = await service.recover(1);
-      expect(result.deleted_at).toBeNull();
+      expect(result.deleted_at).toBeUndefined();
     });
   });
 
@@ -328,9 +329,9 @@ describe("UsersService", () => {
       userRepository.findOneOrFail.mockResolvedValue(mockUser);
       gamesService.findOneByGameIdOrFail.mockResolvedValue(mockGame);
       const mockQb = {
-        relation: jest.fn().mockReturnThis(),
-        of: jest.fn().mockReturnThis(),
-        add: jest.fn().mockResolvedValue(undefined),
+        relation: vi.fn().mockReturnThis(),
+        of: vi.fn().mockReturnThis(),
+        add: vi.fn().mockResolvedValue(undefined),
       };
       userRepository.createQueryBuilder.mockReturnValue(mockQb as any);
 
@@ -355,9 +356,9 @@ describe("UsersService", () => {
       userRepository.findOneOrFail.mockResolvedValue(mockUser);
       gamesService.findOneByGameIdOrFail.mockResolvedValue(mockGame);
       const mockQb = {
-        relation: jest.fn().mockReturnThis(),
-        of: jest.fn().mockReturnThis(),
-        remove: jest.fn().mockResolvedValue(undefined),
+        relation: vi.fn().mockReturnThis(),
+        of: vi.fn().mockReturnThis(),
+        remove: vi.fn().mockResolvedValue(undefined),
       };
       userRepository.createQueryBuilder.mockReturnValue(mockQb as any);
 
@@ -375,17 +376,19 @@ describe("UsersService", () => {
   });
 
   describe("checkIfUsernameMatchesIdOrIsAdminOrThrow", () => {
-    it("should return true for admin users", async () => {
-      const adminUser = createMockUser({ role: Role.ADMIN });
-      userRepository.findOneOrFail.mockResolvedValue(adminUser);
+    it("should allow an admin executor to modify any user's data", async () => {
+      vi.spyOn(service, "checkIfUsernameIsAtLeastRole").mockResolvedValue(true);
       const result = await service.checkIfUsernameMatchesIdOrIsAdminOrThrow(
         1,
-        "testuser",
+        "adminuser",
       );
       expect(result).toBe(true);
     });
 
     it("should return true when username matches", async () => {
+      vi.spyOn(service, "checkIfUsernameIsAtLeastRole").mockResolvedValue(
+        false,
+      );
       const user = createMockUser({ username: "testuser" });
       userRepository.findOneOrFail.mockResolvedValue(user);
       const result = await service.checkIfUsernameMatchesIdOrIsAdminOrThrow(
@@ -396,6 +399,9 @@ describe("UsersService", () => {
     });
 
     it("should throw ForbiddenException for mismatched non-admin user", async () => {
+      vi.spyOn(service, "checkIfUsernameIsAtLeastRole").mockResolvedValue(
+        false,
+      );
       const user = createMockUser({ username: "testuser", role: Role.USER });
       userRepository.findOneOrFail.mockResolvedValue(user);
       await expect(
@@ -406,7 +412,10 @@ describe("UsersService", () => {
 
   describe("findUserForAuthOrFail", () => {
     it("should return user for valid credentials", async () => {
-      const mockUser = createMockUser({ activated: true, deleted_at: null });
+      const mockUser = createMockUser({
+        activated: true,
+        deleted_at: undefined,
+      });
       userRepository.findOneOrFail.mockResolvedValue(mockUser);
       const result = await service.findUserForAuthOrFail({
         username: "testuser",
@@ -426,7 +435,7 @@ describe("UsersService", () => {
       const mockUser = createMockUser({
         activated: false,
         role: Role.USER,
-        deleted_at: null,
+        deleted_at: undefined,
       });
       userRepository.findOneOrFail.mockResolvedValue(mockUser);
       await expect(

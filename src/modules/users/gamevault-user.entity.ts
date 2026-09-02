@@ -8,28 +8,29 @@ import {
   ManyToMany,
   OneToMany,
   OneToOne,
+  type Relation,
 } from "typeorm";
 
-import { Session } from "../auth/session.entity";
-import { DatabaseEntity } from "../database/database.entity";
-import { GamevaultGame } from "../games/gamevault-game.entity";
-import { Media } from "../media/media.entity";
-import { Progress } from "../progresses/progress.entity";
-import { Role } from "./models/role.enum";
+import { Session } from "../auth/session.entity.js";
+import { DatabaseEntity } from "../database/database.entity.js";
+import { GamevaultGame } from "../games/gamevault-game.entity.js";
+import { Media } from "../media/media.entity.js";
+import { Progress } from "../progresses/progress.entity.js";
+import { Role } from "./models/role.enum.js";
 
 @Entity()
 export class GamevaultUser extends DatabaseEntity {
   @Index({ unique: true })
   @Column({ unique: true })
   @ApiProperty({ example: "JohnDoe", description: "username of the user" })
-  username: string;
+  username!: string;
 
   @Column({ select: false })
   @ApiProperty({
     description: "encrypted password of the user",
     example: "Hunter2",
   })
-  password: string;
+  password!: string;
 
   @Index({ unique: true })
   @Column({ select: false, unique: true, length: 64 })
@@ -51,7 +52,7 @@ export class GamevaultUser extends DatabaseEntity {
     type: () => Media,
     description: "the user's avatar image",
   })
-  avatar?: Media;
+  avatar?: Relation<Media>;
 
   @OneToOne(() => Media, {
     nullable: true,
@@ -64,14 +65,14 @@ export class GamevaultUser extends DatabaseEntity {
     type: () => Media,
     description: "the user's profile background image",
   })
-  background?: Media;
+  background?: Relation<Media>;
 
   @Column({ unique: true, nullable: true })
   @ApiProperty({
     example: "john.doe@mail.com",
     description: "email address of the user",
   })
-  email: string;
+  email?: string;
 
   @Column({ nullable: true })
   @ApiPropertyOptional({
@@ -97,7 +98,7 @@ export class GamevaultUser extends DatabaseEntity {
     description: "indicates if the user is activated",
     example: false,
   })
-  activated: boolean;
+  activated!: boolean;
 
   @OneToMany(() => Progress, (progress) => progress.user)
   @ApiPropertyOptional({
@@ -105,7 +106,7 @@ export class GamevaultUser extends DatabaseEntity {
     type: () => Progress,
     isArray: true,
   })
-  progresses?: Progress[];
+  progresses?: Relation<Progress[]>;
 
   @Column({
     type: "simple-enum",
@@ -119,7 +120,7 @@ export class GamevaultUser extends DatabaseEntity {
     description:
       "The role determines the set of permissions and access rights for a user in the system.",
   })
-  role: Role;
+  role!: Role;
 
   @OneToMany(() => Media, (media) => media.uploader)
   @ApiPropertyOptional({
@@ -127,7 +128,7 @@ export class GamevaultUser extends DatabaseEntity {
     type: () => Media,
     isArray: true,
   })
-  uploaded_media?: Media[];
+  uploaded_media?: Relation<Media[]>;
 
   @OneToMany(() => Session, (session) => session.user)
   @ApiPropertyOptional({
@@ -135,7 +136,7 @@ export class GamevaultUser extends DatabaseEntity {
     type: () => Session,
     isArray: true,
   })
-  sessions?: Session[];
+  sessions?: Relation<Session[]>;
 
   @ManyToMany(() => GamevaultGame, (game) => game.bookmarked_users)
   @JoinTable({
@@ -154,5 +155,5 @@ export class GamevaultUser extends DatabaseEntity {
     type: () => GamevaultGame,
     isArray: true,
   })
-  bookmarked_games?: GamevaultGame[];
+  bookmarked_games?: Relation<GamevaultGame[]>;
 }

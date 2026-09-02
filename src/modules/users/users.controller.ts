@@ -18,16 +18,16 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 
-import configuration from "../../configuration";
-import { DisableApiIf } from "../../decorators/disable-api-if.decorator";
-import { MinimumRole } from "../../decorators/minimum-role.decorator";
-import { GameIdDto } from "../games/models/game-id.dto";
-import { ApiKeyService } from "./api-key.service";
-import { GamevaultUser } from "./gamevault-user.entity";
-import { Role } from "./models/role.enum";
-import { UpdateUserDto } from "./models/update-user.dto";
-import { UserIdDto } from "./models/user-id.dto";
-import { UsersService } from "./users.service";
+import configuration from "../../configuration.js";
+import { DisableApiIf } from "../../decorators/disable-api-if.decorator.js";
+import { MinimumRole } from "../../decorators/minimum-role.decorator.js";
+import { type GameIdDto } from "../games/models/game-id.dto.js";
+import { ApiKeyService } from "./api-key.service.js";
+import { GamevaultUser } from "./gamevault-user.entity.js";
+import { Role } from "./models/role.enum.js";
+import { UpdateUserDto } from "./models/update-user.dto.js";
+import { type UserIdDto } from "./models/user-id.dto.js";
+import { UsersService } from "./users.service.js";
 
 @ApiBearerAuth()
 @ApiTags("user")
@@ -102,10 +102,11 @@ export class UsersController {
   @ApiOkResponse({ type: () => GamevaultUser })
   @MinimumRole(Role.USER)
   @DisableApiIf(configuration.SERVER.DEMO_MODE_ENABLED)
-  async deleteUsersMe(@Request() request): Promise<GamevaultUser> {
-    return this.deleteUserByUserId(request.user.id);
+  async deleteUsersMe(
+    @Request() request: { user: GamevaultUser },
+  ): Promise<GamevaultUser> {
+    return this.usersService.delete(request.user.id);
   }
-
   //#endregion
 
   @Post("me/bookmark/:game_id")
