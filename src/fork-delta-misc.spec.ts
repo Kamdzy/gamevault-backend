@@ -140,12 +140,30 @@ describe("Fork delta: login IP falls back to x-forwarded-for", () => {
 describe("Fork delta: media GC filesystem sweep actually sweeps", () => {
   const UUID_NAME = "00013857-b5ca-4bb9-867b-74c4b371c190.webp";
 
+  /**
+   * collectUsedMediaPaths() projects file paths with a QueryBuilder instead of
+   * hydrating entities (see the service for why), so the repository stubs need
+   * a chainable builder rather than find(). Returning no rows means "nothing is
+   * in use", which is what these tests want.
+   */
+  function repoStub(rawRows: Record<string, string | null>[] = []) {
+    const qb: Record<string, unknown> = {};
+    for (const m of ["withDeleted", "select", "leftJoin", "addSelect"]) {
+      qb[m] = vi.fn(() => qb);
+    }
+    qb.getRawMany = vi.fn().mockResolvedValue(rawRows);
+    return {
+      find: vi.fn().mockResolvedValue([]),
+      createQueryBuilder: vi.fn(() => qb),
+      metadata: { name: "StubEntity" },
+    } as any;
+  }
+
   function buildService() {
-    const emptyRepo = { find: vi.fn().mockResolvedValue([]) } as any;
     return new MediaGarbageCollectionService(
-      emptyRepo, // mediaRepository
-      emptyRepo, // gameMetadataRepository
-      emptyRepo, // userRepository
+      repoStub(), // mediaRepository
+      repoStub(), // gameMetadataRepository
+      repoStub(), // userRepository
       { delete: vi.fn().mockResolvedValue(undefined) } as any,
     );
   }
@@ -187,6 +205,89 @@ describe("Fork delta: media GC filesystem sweep actually sweeps", () => {
     // join() so the assertion matches on Windows (\media\x) as well as
     // POSIX (/media/x) — the service builds the path with path.join too.
     expect(fsExtra.remove).toHaveBeenCalledWith(join("/media", UUID_NAME));
+  });
+
+  /**
+   * The sweep matches every file on disk against the in-use path list. Upstream
+   * uses Array.includes, making it O(n*m): at ~24k files that is ~580 million
+   * string comparisons on the event loop, and it ran twice per cycle (once here,
+   * once in removeUnusedMediaFromDB). On 2026-09-02 that blocked all HTTP
+   * traffic for ~13 minutes on the first cycle after the isUUID fix made this
+   * sweep functional — logins returned 200 only after the GC finished.
+   *
+   * A Set makes it O(n). This test is a scale guard, not a microbenchmark: the
+   * budget is deliberately loose so it cannot flake, but 20k x 20k via
+   * Array.includes is ~400M comparisons and blows past it by a wide margin.
+   *
+   * Mutation-verified: reverting either lookup to Array.includes fails this.
+   */
+  it("matches paths in linear time, not quadratic (Set, not Array.includes)", async () => {
+    const N = 20000;
+    const fsExtra = (await import("fs-extra")).default as any;
+    // Every file is in use, so nothing is deleted and the full N*N comparison
+    // space is exercised rather than short-circuiting on an early match.
+    const names = Array.from(
+      { length: N },
+      (_, i) =>
+        `${i.toString(16).padStart(8, "0")}-b5ca-4bb9-867b-74c4b371c190.webp`,
+    );
+    fsExtra.readdir.mockResolvedValue(
+      names.map((name) => ({ name, isFile: () => true, parentPath: "/media" })),
+    );
+
+    const used = names.map((n) => join("/media", n));
+    const service = new MediaGarbageCollectionService(
+      repoStub(),
+      repoStub(),
+      repoStub(),
+      { delete: vi.fn().mockResolvedValue(undefined) } as any,
+    );
+    vi.spyOn(service as any, "collectUsedMediaPaths").mockResolvedValue(used);
+
+    const started = Date.now();
+    await service.garbageCollectUnusedMedia();
+    const elapsed = Date.now() - started;
+
+    expect(fsExtra.remove).not.toHaveBeenCalled();
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  /**
+   * collectUsedMediaPaths() must PROJECT file paths, never hydrate entities.
+   *
+   * Upstream calls repository.find({ relations, relationLoadStrategy:"query" })
+   * and walks the entity graph. It only ever reads media.file_path, but that
+   * materialises every column of every row into a class instance and resolves
+   * each relation with an in-memory join.
+   *
+   * Measured live: `SELECT * FROM game_metadata` (18,943 rows / 54 MB) takes
+   * 275ms, while the find() call took ~488 SECONDS -- all TypeORM hydration on
+   * the main event loop. That stalled every HTTP request for ~8-11 minutes,
+   * hourly, on the hour. The projection returns the same paths in ~76ms.
+   *
+   * Mutation-verified: restoring repository.find() fails this test.
+   */
+  it("projects media paths via QueryBuilder instead of hydrating entities", async () => {
+    const fsExtra = (await import("fs-extra")).default as any;
+    fsExtra.readdir.mockResolvedValue([]);
+
+    const userRepo = repoStub([{ background_file_path: "/media/a.png", avatar_file_path: null }]);
+    const metaRepo = repoStub([{ background_file_path: null, cover_file_path: "/media/b.png" }]);
+    const service = new MediaGarbageCollectionService(
+      repoStub(),
+      metaRepo,
+      userRepo,
+      { delete: vi.fn().mockResolvedValue(undefined) } as any,
+    );
+
+    await service.garbageCollectUnusedMedia();
+
+    // The projection path must be used...
+    expect(userRepo.createQueryBuilder).toHaveBeenCalled();
+    expect(metaRepo.createQueryBuilder).toHaveBeenCalled();
+    // ...and entity hydration must NOT be.
+    expect(userRepo.find).not.toHaveBeenCalled();
+    expect(metaRepo.find).not.toHaveBeenCalled();
   });
 
   /** Non-UUID files (e.g. FUSE tombstones) must still be ignored. */

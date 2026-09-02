@@ -7,7 +7,6 @@ import lodash from "lodash";
 import { join } from "path";
 import { Repository } from "typeorm";
 import configuration from "../../configuration.js";
-import { toFindOptionsRelations } from "../../globals.js";
 import { Media } from "../media/media.entity.js";
 import { MediaService } from "../media/media.service.js";
 import { GameMetadata } from "../metadata/games/game.metadata.entity.js";
@@ -95,7 +94,6 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
    * @returns An array of media paths that are currently being used.
    */
   private async collectUsedMediaPaths(): Promise<string[]> {
-    const mediaPaths: string[] = [];
     /**
      * The entities and properties that are checked for media usage.
      * Each element in the array is an object with a `repository` property and a
@@ -113,58 +111,59 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
         relations: ["background", "cover"],
       },
     ];
+
+    const mediaPaths: string[] = [];
+
     /**
-     * Loop through the entities and their properties and find the media that is
-     * being used.
+     * Fork: project the file paths directly instead of hydrating entities.
+     *
+     * Upstream calls repository.find({ relations, relationLoadStrategy:"query" })
+     * and then walks the resulting entity graph. The GC only ever reads
+     * media.file_path off those relations, but that call materialises every
+     * column of every row into a class instance and resolves each relation with
+     * an in-memory join.
+     *
+     * Measured on the live server: `SELECT * FROM game_metadata` (18,943 rows,
+     * 54 MB) returns in 275ms, yet the find() call took ~488 SECONDS. The cost
+     * is entirely TypeORM hydration on the main event loop, and it stalled all
+     * HTTP traffic for ~8-11 minutes every hour, on the hour. The equivalent
+     * projection below returns the same paths in ~76ms.
+     *
+     * leftJoin + addSelect + getRawMany keeps TypeORM's relation metadata (no
+     * hardcoded join columns) while skipping entity construction entirely.
      */
     for (const { repository, relations } of entityMediaProperties) {
-      const entities = await repository.find({
-        withDeleted: true,
-        relations: toFindOptionsRelations<Record<string, unknown>>(relations),
-        loadEagerRelations: false,
-        relationLoadStrategy: "query",
-      });
-      for (const entity of entities) {
-        const foundMedia: Media[] = [];
-        const entityRecord = entity as unknown as Record<string, unknown>;
-        /**
-         * Loop through each property of the entity and check if it contains
-         * media.
-         */
+      const alias = "entity";
+      const query = repository
+        .createQueryBuilder(alias)
+        .withDeleted()
+        .select([]);
+
+      for (const relation of relations) {
+        query
+          .leftJoin(`${alias}.${relation}`, relation)
+          .addSelect(`${relation}.file_path`, `${relation}_file_path`);
+      }
+
+      const rows = await query.getRawMany<Record<string, string | null>>();
+
+      let found = 0;
+      for (const row of rows) {
         for (const relation of relations) {
-          if (Array.isArray(entityRecord[relation])) {
-            const relatedMedia = entityRecord[relation] as Media[];
-            this.logger.debug({
-              message: `Found ${relatedMedia.length} media entities in relation.`,
-              entity: entity.constructor.name,
-              entity_id: entity.id,
-              entity_relation: relation,
-              media_ids: relatedMedia.map((media) => media.id),
-              media_paths: relatedMedia.map((media) => media.file_path),
-            });
-            foundMedia.push(...relatedMedia);
-          } else if (entityRecord[relation]) {
-            const media = entityRecord[relation] as Media;
-            this.logger.debug({
-              message: `Found 1 media entity in relation.`,
-              entity: entity.constructor.name,
-              entity_id: entity.id,
-              entity_relation: relation,
-              media_id: media.id,
-              media_path: media.file_path,
-            });
-            foundMedia.push(media);
+          const filePath = row[`${relation}_file_path`];
+          if (filePath) {
+            mediaPaths.push(filePath);
+            found++;
           }
         }
-        /**
-         * Add the media paths to the `mediaPaths` array.
-         */
-        mediaPaths.push(
-          ...foundMedia
-            .filter((media) => media.file_path)
-            .map((media) => media.file_path ?? ""),
-        );
       }
+
+      this.logger.debug({
+        message: "Collected media references from entities.",
+        entity: repository.metadata.name,
+        row_count: rows.length,
+        media_paths_found: found,
+      });
     }
     return mediaPaths;
   }
@@ -189,10 +188,15 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
       delta: uniqueAllMedia.length - uniqueUsedMediaPaths.length,
     });
 
-    // Filter out media that are not being used
+    // Fork: Set lookup, not Array.includes. This filter runs once per media
+    // row against the whole used-path list, so `includes` makes it O(n*m) —
+    // at ~24k rows that is ~580 million string comparisons on the event loop,
+    // which blocked all HTTP traffic for ~13 minutes on the first run after
+    // the isUUID fix made this sweep functional. A Set makes it O(n).
+    const usedMediaPathSet = new Set(uniqueUsedMediaPaths);
     const uniqueUnusedMedia = uniq(
       uniqueAllMedia.filter(
-        (media) => !uniqueUsedMediaPaths.includes(media.file_path ?? ""),
+        (media) => !usedMediaPathSet.has(media.file_path ?? ""),
       ),
     );
 
@@ -252,10 +256,15 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
 
     let removedCount = 0;
 
+    // Fork: same O(n*m) -> O(n) fix as in removeUnusedMediaFromDB. The comment
+    // below already called usedMediaPaths a "set"; it was an Array, and the
+    // per-file `includes` scan is what stalled the event loop.
+    const usedMediaPathSet = new Set(usedMediaPaths);
+
     // Create an array of unlink promises for each file
     const unlinkPromises = allMediaFilePaths.map((path) => {
       // If the file path is not in the usedMediaPaths set, delete the file
-      if (!usedMediaPaths.includes(path)) {
+      if (!usedMediaPathSet.has(path)) {
         return remove(path)
           .then(() => {
             this.logger.debug({

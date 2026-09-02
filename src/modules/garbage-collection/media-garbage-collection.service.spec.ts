@@ -37,17 +37,48 @@ describe("MediaGarbageCollectionService", () => {
   let mockMediaService: any;
 
   beforeEach(() => {
+    // Fork: collectUsedMediaPaths() projects file paths with a QueryBuilder
+    // rather than hydrating entities via find() -- upstream's find() call took
+    // ~488s on 18,943 rows and stalled all HTTP for ~8-11 minutes hourly. The
+    // repos it reads therefore need a chainable builder stub. Returning no rows
+    // means "nothing is in use", which matches the previous find() -> [] stubs.
+    const queryBuilderStub = () => {
+      const qb: Record<string, unknown> = {};
+      for (const method of ["withDeleted", "select", "leftJoin", "addSelect"]) {
+        qb[method] = vi.fn(() => qb);
+      }
+      qb.getRawMany = vi.fn().mockResolvedValue([]);
+      return qb;
+    };
+
     mockMediaRepo = {
       find: vi.fn().mockResolvedValue([]),
     };
     mockGameMetadataRepo = {
       find: vi.fn().mockResolvedValue([]),
+      createQueryBuilder: vi.fn(queryBuilderStub),
+      metadata: { name: "GameMetadata" },
     };
     mockUserRepo = {
       find: vi.fn().mockResolvedValue([]),
+      createQueryBuilder: vi.fn(queryBuilderStub),
+      metadata: { name: "GamevaultUser" },
     };
     mockMediaService = {
       delete: vi.fn().mockResolvedValue(undefined),
+    };
+
+    // Point a repo's QueryBuilder at a specific set of projected rows. The
+    // projection aliases each relation's column as `<relation>_file_path`.
+    (globalThis as any).__setRawRows = (repo: any, rows: unknown[]) => {
+      repo.createQueryBuilder = vi.fn(() => {
+        const qb: Record<string, unknown> = {};
+        for (const m of ["withDeleted", "select", "leftJoin", "addSelect"]) {
+          qb[m] = vi.fn(() => qb);
+        }
+        qb.getRawMany = vi.fn().mockResolvedValue(rows);
+        return qb;
+      });
     };
 
     service = new MediaGarbageCollectionService(
@@ -81,10 +112,10 @@ describe("MediaGarbageCollectionService", () => {
       mockMediaRepo.find.mockResolvedValue([usedMedia, unusedMedia]);
 
       // Game metadata uses usedMedia as cover
-      mockGameMetadataRepo.find.mockResolvedValue([
-        { id: 1, background: null, cover: usedMedia },
+      (globalThis as any).__setRawRows(mockGameMetadataRepo, [
+        { background_file_path: null, cover_file_path: usedMedia.file_path },
       ]);
-      mockUserRepo.find.mockResolvedValue([]);
+      (globalThis as any).__setRawRows(mockUserRepo, []);
 
       await service.garbageCollectUnusedMedia();
 
@@ -98,10 +129,13 @@ describe("MediaGarbageCollectionService", () => {
 
       mockMediaRepo.find.mockResolvedValue([media1, media2]);
 
-      mockUserRepo.find.mockResolvedValue([
-        { id: 1, avatar: media1, background: media2 },
+      (globalThis as any).__setRawRows(mockUserRepo, [
+        {
+          avatar_file_path: media1.file_path,
+          background_file_path: media2.file_path,
+        },
       ]);
-      mockGameMetadataRepo.find.mockResolvedValue([]);
+      (globalThis as any).__setRawRows(mockGameMetadataRepo, []);
 
       await service.garbageCollectUnusedMedia();
 
@@ -134,11 +168,11 @@ describe("MediaGarbageCollectionService", () => {
       const gameMedia = { id: 2, file_path: "/media/cover.jpg" };
 
       mockMediaRepo.find.mockResolvedValue([userMedia, gameMedia]);
-      mockUserRepo.find.mockResolvedValue([
-        { id: 1, avatar: userMedia, background: null },
+      (globalThis as any).__setRawRows(mockUserRepo, [
+        { avatar_file_path: userMedia.file_path, background_file_path: null },
       ]);
-      mockGameMetadataRepo.find.mockResolvedValue([
-        { id: 1, cover: gameMedia, background: null },
+      (globalThis as any).__setRawRows(mockGameMetadataRepo, [
+        { cover_file_path: gameMedia.file_path, background_file_path: null },
       ]);
 
       await service.garbageCollectUnusedMedia();
