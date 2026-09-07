@@ -115,9 +115,7 @@ describe("Fork delta: metadata queue holds IDs, not entities", () => {
       generateSortTitle: vi.fn().mockReturnValue("sort-title"),
     };
     gameMetadataService = {
-      save: vi
-        .fn()
-        .mockImplementation((m) => Promise.resolve({ ...m, id: 1 })),
+      save: vi.fn().mockImplementation((m) => Promise.resolve({ ...m, id: 1 })),
       deleteByGameMetadataIdOrFail: vi.fn().mockResolvedValue(undefined),
     };
     service = new MetadataService(
@@ -314,9 +312,7 @@ describe("Fork delta: negative-priority providers are disabled", () => {
     service.registerProvider(
       createMockProvider({ slug: "igdb", priority: 10 }),
     );
-    const mapSpy = vi
-      .spyOn(service as any, "map")
-      .mockResolvedValue(undefined);
+    const mapSpy = vi.spyOn(service as any, "map").mockResolvedValue(undefined);
     const mergeSpy = vi.spyOn(service, "merge").mockResolvedValue({} as any);
 
     gamesService.findOneByGameIdOrFail.mockResolvedValue({

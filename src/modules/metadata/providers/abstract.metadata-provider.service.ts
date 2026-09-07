@@ -78,6 +78,45 @@ export abstract class MetadataProvider
   @Min(0)
   public request_interval_ms = 0;
 
+  /**
+   * Optional: patterns that recognise this provider's own identifier inside a
+   * game's version tag, enabling an exact ID lookup instead of a fuzzy title
+   * search.
+   *
+   * Many release-naming conventions embed the upstream catalogue id in the
+   * filename's `(v...)` block, e.g. `Some Game (v1.2.0-ABC123456) (W_P)
+   * (2025).7z`. When a provider declares patterns here, {@link findMetadata}
+   * tries them before falling back to {@link getBestMatch}, which turns a
+   * best-effort title comparison into a deterministic lookup.
+   *
+   * Contract:
+   * - Patterns are tested against each `-` / `+` separated segment of
+   *   `game.version`, and are matched ANYWHERE inside a segment rather than
+   *   against the whole segment. Real-world tags decorate ids with extra text
+   *   (edition markers, DLC suffixes), so anchoring with `^...$` would miss
+   *   them. Do NOT anchor unless the id genuinely cannot be decorated.
+   * - Capture group 1 is used as the raw hint when present, otherwise the
+   *   whole match. Pass the raw hint through {@link decodeHint} to get the
+   *   canonical `provider_data_id`.
+   * - Be strict. Version tags are full of non-identifier noise (`v1.2`,
+   *   `vFinal`, `b12345`, edition and repacker markers). A loose pattern will
+   *   claim those and produce confidently wrong matches. Gate on a minimum
+   *   digit count wherever the id has a known length.
+   * - Leave undefined to opt out; the provider then always uses title search.
+   */
+  public hintPatterns?: RegExp[];
+
+  /**
+   * Optional: converts a raw hint captured by {@link hintPatterns} into the
+   * canonical `provider_data_id` this provider's
+   * {@link getByProviderDataIdOrFail} expects.
+   *
+   * Needed when the naming convention stores a lossy or reformatted version of
+   * the id (separators stripped, casing changed, a prefix dropped to avoid an
+   * awkward-looking tag). Defaults to identity when not implemented.
+   */
+  public decodeHint?(rawHint: string): string;
+
   public getDto(): MetadataProviderDto {
     return {
       slug: this.slug,

@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { validateOrReject } from "class-validator";
 import lodash from "lodash";
+import { stringSimilarity } from "string-similarity-js";
 import { setTimeout } from "timers/promises";
 import type { AppConfiguration } from "../../configuration.js";
 import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator.js";
@@ -57,6 +58,19 @@ const CASCADE_SAFE_METADATA_RELATIONS: string[] = [
 
 @Injectable()
 export class MetadataService {
+  /**
+   * Minimum kebab-cased title similarity for an id parsed out of a game's
+   * version tag to be trusted.
+   *
+   * Deliberately low. The comparison is between a filename-derived title and a
+   * catalogue title, which legitimately diverge a lot — transliteration,
+   * subtitles, edition suffixes, localised vs original naming. The bar only
+   * has to catch an id that resolved to something completely unrelated, which
+   * is what a typo or a bad scrape produces. Raising it would start rejecting
+   * correct matches on titles that were merely renamed.
+   */
+  private static readonly HINT_MIN_TITLE_SIMILARITY = 0.3;
+
   private readonly logger = new Logger(this.constructor.name);
   // Fork (2d99061): IDs only. Holding GamevaultGame entities pinned
   // thousands of fully-hydrated games in heap during a full re-index.
@@ -379,7 +393,110 @@ export class MetadataService {
   }
 
   /**
+   * Splits a game's version tag into candidate segments for provider id hints.
+   *
+   * Version tags are `-` joined, but ids also turn up after a `+` (used to
+   * append DLC or bonus-content markers), so both are treated as separators.
+   * Segments are returned as-is; matching them is each provider's job via
+   * {@link MetadataProvider.hintPatterns}.
+   */
+  private extractHintSegments(version: string | undefined | null): string[] {
+    return (version ?? "")
+      .split(/[-+]/)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * Attempts an exact id lookup using an identifier embedded in the game's
+   * version tag, instead of a fuzzy title search.
+   *
+   * Returns the resolved `provider_data_id`, or undefined when no hint
+   * matched, the lookup failed, or the result failed the sanity check below.
+   * Callers fall back to {@link MetadataProvider.getBestMatch}.
+   *
+   * SAFETY: a hint is only as good as whatever wrote the filename. A typo or a
+   * mis-scrape produces an id that resolves perfectly to the WRONG game, and
+   * unlike a weak title match it looks authoritative. So the resolved title is
+   * compared against the game's title and the hint is rejected outright when
+   * they are unrelated. Being wrong here is worse than being fuzzy, because
+   * the first successful match is the one that sticks (see findMetadata).
+   */
+  private async resolveByHint(
+    game: GamevaultGame,
+    provider: MetadataProvider,
+  ): Promise<string | undefined> {
+    if (!provider.hintPatterns?.length) return undefined;
+
+    const segments = this.extractHintSegments(game.version);
+    if (!segments.length) return undefined;
+
+    for (const segment of segments) {
+      for (const pattern of provider.hintPatterns) {
+        // Patterns are matched anywhere inside a segment, so strip the global
+        // flag to keep `lastIndex` from leaking between iterations.
+        const match = segment.match(
+          new RegExp(pattern.source, pattern.flags.replace(/g/g, "")),
+        );
+        if (!match) continue;
+
+        const rawHint = match[1] ?? match[0];
+        const providerDataId = provider.decodeHint
+          ? provider.decodeHint(rawHint)
+          : rawHint;
+        if (!providerDataId) continue;
+
+        try {
+          const candidate =
+            await provider.getByProviderDataIdOrFail(providerDataId);
+          const similarity = stringSimilarity(
+            kebabCase(game.title ?? ""),
+            kebabCase(candidate.title ?? ""),
+          );
+
+          if (similarity < MetadataService.HINT_MIN_TITLE_SIMILARITY) {
+            this.logger.warn({
+              message:
+                "Rejected version-tag id hint: it resolved to an unrelated title.",
+              game: logGamevaultGame(game),
+              provider: logMetadataProvider(provider),
+              hint: providerDataId,
+              resolved_title: candidate.title,
+              similarity,
+            });
+            continue;
+          }
+
+          this.logger.log({
+            message: "Matched metadata by id from the game's version tag.",
+            game: logGamevaultGame(game),
+            provider: logMetadataProvider(provider),
+            hint: providerDataId,
+            similarity,
+          });
+          return providerDataId;
+        } catch (error) {
+          this.logger.debug({
+            message: "Version-tag id hint did not resolve. Ignoring it.",
+            game: logGamevaultGame(game),
+            provider: logMetadataProvider(provider),
+            hint: providerDataId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
    * Checks the metadata of a single provider and updates it if necessary.
+   *
+   * Only reached when the game has NO existing mapping for this provider (see
+   * updateMetadata): an existing mapping is refreshed by its stored id, never
+   * re-matched. That is what makes a manual correction in the client stick —
+   * and it also means everything here only ever runs for a first-time match.
    */
   private async findMetadata(
     game: GamevaultGame,
@@ -391,6 +508,13 @@ export class MetadataService {
       provider: logMetadataProvider(provider),
     });
     try {
+      // Prefer a deterministic id lookup when the version tag carries one.
+      const hintedProviderDataId = await this.resolveByHint(game, provider);
+      if (hintedProviderDataId) {
+        await this.map(game.id, provider.slug, hintedProviderDataId);
+        return;
+      }
+
       const bestMatchingGame = await provider.getBestMatch(game);
       await this.map(
         game.id,

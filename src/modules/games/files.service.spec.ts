@@ -6,6 +6,7 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import * as fsExtraModule from "fs-extra";
 import { constants } from "fs-extra";
+import path from "path";
 import type { Mock, Mocked } from "vitest";
 import configurationModule from "../../configuration.js";
 import { MetadataService } from "../metadata/metadata.service.js";
@@ -193,6 +194,12 @@ describe("FilesService", () => {
     });
 
     it("should persist uploaded file and trigger indexing", async () => {
+      // upload() builds its target with path.join, which is platform-aware, so
+      // the expectations are built the same way. Hard-coding the POSIX form
+      // made this the one test in the suite that failed on Windows while
+      // passing in CI.
+      const targetPath = path.join("/tmp/test-files", "My Game.zip");
+
       const result = await service.upload({
         originalname: "My Game.zip",
         buffer: Buffer.from("payload"),
@@ -204,14 +211,14 @@ describe("FilesService", () => {
         constants.W_OK,
       );
       expect(fsExtra.writeFile).toHaveBeenCalledWith(
-        "/tmp/test-files/My Game.zip",
+        targetPath,
         expect.any(Buffer),
       );
       expect((service as any).index).toHaveBeenCalledWith(
-        "/tmp/test-files/My Game.zip",
+        targetPath,
         expect.any(Object),
       );
-      expect(result).toEqual({ path: "/tmp/test-files/My Game.zip" });
+      expect(result).toEqual({ path: targetPath });
     });
   });
 

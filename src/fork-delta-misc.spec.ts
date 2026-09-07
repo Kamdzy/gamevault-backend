@@ -5,16 +5,14 @@
  * quietly undo. See CLAUDE.md → "Preserving the Fork Across Upstream Merges".
  */
 
-import { join } from "path";
 import { Response } from "express";
+import { join } from "path";
 import type { Mocked } from "vitest";
 import globals from "./globals.js";
 import { AuthenticationService } from "./modules/auth/authentication.service.js";
 import { BasicAuthController } from "./modules/auth/controllers/basic-auth.controller.js";
 import { OAuth2Controller } from "./modules/auth/controllers/oauth2.controller.js";
 import { MediaGarbageCollectionService } from "./modules/garbage-collection/media-garbage-collection.service.js";
-
-
 
 // These controllers pull in the guard/DTO/logging chain, which reads many
 // config namespaces at import time. Start from the real configuration and
@@ -271,8 +269,12 @@ describe("Fork delta: media GC filesystem sweep actually sweeps", () => {
     const fsExtra = (await import("fs-extra")).default as any;
     fsExtra.readdir.mockResolvedValue([]);
 
-    const userRepo = repoStub([{ background_file_path: "/media/a.png", avatar_file_path: null }]);
-    const metaRepo = repoStub([{ background_file_path: null, cover_file_path: "/media/b.png" }]);
+    const userRepo = repoStub([
+      { background_file_path: "/media/a.png", avatar_file_path: null },
+    ]);
+    const metaRepo = repoStub([
+      { background_file_path: null, cover_file_path: "/media/b.png" },
+    ]);
     const service = new MediaGarbageCollectionService(
       repoStub(),
       metaRepo,
