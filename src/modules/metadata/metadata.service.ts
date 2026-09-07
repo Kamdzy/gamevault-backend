@@ -60,7 +60,8 @@ const CASCADE_SAFE_METADATA_RELATIONS: string[] = [
 export class MetadataService {
   /**
    * Minimum kebab-cased title similarity for an id parsed out of a game's
-   * version tag to be trusted.
+   * version tag to be trusted, WHEN the two titles are comparable at all
+   * (see isComparableForSimilarity).
    *
    * Deliberately low. The comparison is between a filename-derived title and a
    * catalogue title, which legitimately diverge a lot — transliteration,
@@ -70,6 +71,15 @@ export class MetadataService {
    * correct matches on titles that were merely renamed.
    */
   private static readonly HINT_MIN_TITLE_SIMILARITY = 0.3;
+
+  /**
+   * Fraction of a title's letters that must be Latin for it to take part in a
+   * similarity comparison. Titles are compared with a character-bigram metric,
+   * which is meaningless across writing systems: a romanised filename and the
+   * original-script catalogue title share almost no characters even when they
+   * name the same game.
+   */
+  private static readonly HINT_LATIN_RATIO = 0.5;
 
   private readonly logger = new Logger(this.constructor.name);
   // Fork (2d99061): IDs only. Holding GamevaultGame entities pinned
@@ -408,6 +418,35 @@ export class MetadataService {
   }
 
   /**
+   * Whether two titles can meaningfully be compared by string similarity.
+   *
+   * The similarity metric is character-bigram based, so it only says anything
+   * useful when both sides are written in the same script. A transliterated
+   * filename and an original-script catalogue title share almost no characters
+   * even when they name the same release, e.g. a file called
+   * `Hoshi no Kakera` against a catalogue entry written as `星のかけら` scores
+   * effectively zero — as does any Latin/Cyrillic or Latin/Hangul pairing.
+   *
+   * Applying a threshold to a score like that rejects correct matches, which
+   * would silently turn the id fast-path into a no-op for precisely the
+   * catalogues where an exact id helps most. So when the scripts differ the
+   * check ABSTAINS rather than rejects: a meaningless score is not evidence of
+   * a bad match, and the id itself is the stronger signal.
+   */
+  private isComparableForSimilarity(a: string, b: string): boolean {
+    const latinRatio = (value: string): number => {
+      const letters = value.match(/\p{L}/gu) ?? [];
+      if (!letters.length) return 0;
+      const latin = value.match(/\p{Script=Latin}/gu) ?? [];
+      return latin.length / letters.length;
+    };
+    return (
+      latinRatio(a) >= MetadataService.HINT_LATIN_RATIO &&
+      latinRatio(b) >= MetadataService.HINT_LATIN_RATIO
+    );
+  }
+
+  /**
    * Attempts an exact id lookup using an identifier embedded in the game's
    * version tag, instead of a fuzzy title search.
    *
@@ -449,19 +488,28 @@ export class MetadataService {
         try {
           const candidate =
             await provider.getByProviderDataIdOrFail(providerDataId);
-          const similarity = stringSimilarity(
-            kebabCase(game.title ?? ""),
-            kebabCase(candidate.title ?? ""),
-          );
 
-          if (similarity < MetadataService.HINT_MIN_TITLE_SIMILARITY) {
+          const gameTitle = game.title ?? "";
+          const candidateTitle = candidate.title ?? "";
+          const comparable = this.isComparableForSimilarity(
+            gameTitle,
+            candidateTitle,
+          );
+          const similarity = comparable
+            ? stringSimilarity(kebabCase(gameTitle), kebabCase(candidateTitle))
+            : null;
+
+          if (
+            similarity !== null &&
+            similarity < MetadataService.HINT_MIN_TITLE_SIMILARITY
+          ) {
             this.logger.warn({
               message:
                 "Rejected version-tag id hint: it resolved to an unrelated title.",
               game: logGamevaultGame(game),
               provider: logMetadataProvider(provider),
               hint: providerDataId,
-              resolved_title: candidate.title,
+              resolved_title: candidateTitle,
               similarity,
             });
             continue;
@@ -472,6 +520,9 @@ export class MetadataService {
             game: logGamevaultGame(game),
             provider: logMetadataProvider(provider),
             hint: providerDataId,
+            // null when the two titles are in different scripts, where a
+            // similarity score carries no information — see
+            // isComparableForSimilarity().
             similarity,
           });
           return providerDataId;

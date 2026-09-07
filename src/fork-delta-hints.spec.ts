@@ -202,6 +202,52 @@ describe("fork: version-tag id hints", () => {
     expect(mapSpy).toHaveBeenCalledWith(5, "test-provider", "ID77777");
   });
 
+  it("accepts a hint whose resolved title is in a different script", async () => {
+    // REGRESSION GUARD. The similarity check is character-bigram based, so a
+    // transliterated filename scores ~0 against an original-script catalogue
+    // title even when both name the same release. An earlier version applied
+    // the threshold unconditionally and rejected every such match, which
+    // turned the whole fast-path into a no-op for non-Latin catalogues.
+    // The check must ABSTAIN when the scripts differ, not reject.
+    const provider = makeHintProvider();
+    (provider.getByProviderDataIdOrFail as Mock).mockResolvedValue({
+      provider_data_id: "ID54321",
+      title: "星のかけら 〜遠い記憶〜",
+    });
+
+    await callFindMetadata(
+      service,
+      { id: 20, title: "Hoshi no Kakera ~Tooi Kioku~", version: "v1.0-xID54321" },
+      provider,
+    );
+
+    expect(provider.getByProviderDataIdOrFail).toHaveBeenCalledWith("ID54321");
+    expect(provider.getBestMatch).not.toHaveBeenCalled();
+    expect(mapSpy).toHaveBeenCalledWith(20, "test-provider", "ID54321");
+  });
+
+  it("still rejects an unrelated title when both sides ARE comparable", async () => {
+    // The abstain above must not disable the guard for same-script titles,
+    // which is where a mis-scraped id is actually detectable.
+    const provider = makeHintProvider();
+    (provider.getByProviderDataIdOrFail as Mock).mockResolvedValue({
+      provider_data_id: "ID11223",
+      title: "Entirely Unrelated Widget Simulator",
+    });
+    (provider.getBestMatch as Mock).mockResolvedValue({
+      provider_data_id: "ID99999",
+    });
+
+    await callFindMetadata(
+      service,
+      { id: 21, title: "Quiet Harbour Nights", version: "v2.1-xID11223" },
+      provider,
+    );
+
+    expect(provider.getBestMatch).toHaveBeenCalled();
+    expect(mapSpy).toHaveBeenCalledWith(21, "test-provider", "ID99999");
+  });
+
   it("falls back to title search when the id lookup throws", async () => {
     const provider = makeHintProvider();
     (provider.getByProviderDataIdOrFail as Mock).mockRejectedValue(
