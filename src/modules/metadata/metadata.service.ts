@@ -943,19 +943,62 @@ export class MetadataService {
     providerPriorityOverride?: number,
   ): Promise<GamevaultGame> {
     const provider = this.getProviderBySlugOrFail(providerSlug);
+    // Fork: `provider_priority < 0` is the quarantine convention — the
+    // provider is disabled for this game (see `hasNegativePriority`). Under
+    // that intent, "disable" must succeed even when the provider can no
+    // longer resolve the stored id (the id may be dead, merged, or newly
+    // deleted upstream). The fetch is still attempted opportunistically so
+    // a healthy id gets one last data refresh before it goes quiet; a
+    // failed fetch falls back to preserving the existing row and just
+    // writing the negative priority column.
+    const isDisableIntent =
+      providerPriorityOverride != null && providerPriorityOverride < 0;
 
     try {
-      // Fetch metadata from provider
-      const fetchedMetadata =
-        await provider.getByProviderDataIdOrFail(providerGameId);
+      let gameMetadata: GameMetadata;
+      try {
+        // Fetch metadata from provider
+        const fetchedMetadata =
+          await provider.getByProviderDataIdOrFail(providerGameId);
 
-      // Apply priority override if provided
-      if (providerPriorityOverride != null) {
-        fetchedMetadata.provider_priority = providerPriorityOverride;
+        // Apply priority override if provided
+        if (providerPriorityOverride != null) {
+          fetchedMetadata.provider_priority = providerPriorityOverride;
+        }
+
+        // Save the metadata
+        gameMetadata = await this.gameMetadataService.save(fetchedMetadata);
+      } catch (fetchError) {
+        if (!isDisableIntent) throw fetchError;
+
+        // Disable-intent fallback: fetch failed but the caller only wants to
+        // quarantine the mapping. Reuse the existing row (or create a minimal
+        // stub) and overwrite `provider_priority` in place — NOT via
+        // `gameMetadataService.save()`, which would wipe title/cover/etc. by
+        // way of its `publishers/developers/tags/genres = []` reassignment.
+        this.logger.warn({
+          message:
+            "Provider fetch failed while disabling. Preserving existing metadata and applying negative priority.",
+          provider: logMetadataProvider(provider),
+          game: logGamevaultGame({ id: gameId } as GamevaultGame),
+          providerSlug,
+          providerGameId,
+          providerPriorityOverride,
+          error: fetchError,
+        });
+        const stub = await this.gameMetadataService.findOrCreateMinimalStub(
+          providerSlug,
+          providerGameId,
+        );
+        await this.gameMetadataService.setProviderPriority(
+          stub.id,
+          providerPriorityOverride!,
+        );
+        gameMetadata = {
+          ...stub,
+          provider_priority: providerPriorityOverride,
+        } as GameMetadata;
       }
-
-      // Save the metadata
-      const gameMetadata = await this.gameMetadataService.save(fetchedMetadata);
 
       // Unmap the game from older metadata
       await this.unmap(gameId, providerSlug);

@@ -583,6 +583,132 @@ describe("Fork delta: recache loads nested eager children explicitly (TypeORM 1.
   });
 });
 
+/**
+ * Fork: `provider_priority < 0` is the quarantine convention (disabled for
+ * this game — filtered by `hasNegativePriority`). Historically `map()` always
+ * fetched from the provider first and then applied the override, which meant
+ * setting priority to -1 on a stale mapping crashed with HTTP 500: the
+ * provider fetch failed on the dead id, and the "disable" write never
+ * happened. These tests guard the fix that lets disable-intent PUTs succeed
+ * even when the provider can no longer resolve the stored id.
+ *
+ * Mutation-verified: removing the `isDisableIntent` branch in `map()` makes
+ * "map() with priority=-1 succeeds even when provider fetch throws" and
+ * "existing metadata row is preserved..." fail.
+ */
+describe("Fork delta: map() with negative priority quarantines even when the provider fetch fails", () => {
+  let service: MetadataService;
+  let gamesService: any;
+  let gameMetadataService: any;
+  const EXISTING_META = {
+    id: 999,
+    provider_slug: "igdb",
+    provider_data_id: "dead-id",
+    title: "Preserved Title",
+    description: "Preserved description",
+    provider_priority: 5,
+  };
+
+  beforeEach(() => {
+    gamesService = {
+      findOneByGameIdOrFail: vi.fn().mockResolvedValue({
+        id: 1,
+        provider_metadata: [],
+        user_metadata: null,
+        metadata: null,
+      }),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort"),
+    };
+    gameMetadataService = {
+      save: vi.fn().mockImplementation((m) => Promise.resolve({ id: 42, ...m })),
+      deleteByGameMetadataIdOrFail: vi.fn().mockResolvedValue(undefined),
+      findOrCreateMinimalStub: vi.fn().mockResolvedValue({ ...EXISTING_META }),
+      setProviderPriority: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new MetadataService(
+      gamesService,
+      gameMetadataService,
+      configuration as any,
+    );
+    service.registerProvider(
+      createMockProvider({
+        slug: "igdb",
+        priority: 10,
+        getByProviderDataIdOrFail: vi
+          .fn()
+          .mockRejectedValue(new Error("No game found with ID: dead-id")),
+      }),
+    );
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("succeeds when the provider fetch throws and priority is negative", async () => {
+    await expect(service.map(1, "igdb", "dead-id", -1)).resolves.toBeDefined();
+    expect(gameMetadataService.findOrCreateMinimalStub).toHaveBeenCalledWith(
+      "igdb",
+      "dead-id",
+    );
+    expect(gameMetadataService.setProviderPriority).toHaveBeenCalledWith(
+      EXISTING_META.id,
+      -1,
+    );
+    // save() is the destructive upsert flow — must NOT be called on the
+    // fallback path or title/cover/description would be wiped.
+    expect(gameMetadataService.save).not.toHaveBeenCalled();
+  });
+
+  it("still throws when the fetch fails on a NON-disable map (positive priority)", async () => {
+    await expect(service.map(1, "igdb", "dead-id", 5)).rejects.toThrow();
+    expect(gameMetadataService.findOrCreateMinimalStub).not.toHaveBeenCalled();
+    expect(gameMetadataService.setProviderPriority).not.toHaveBeenCalled();
+  });
+
+  it("still throws when the fetch fails and no priority override is given", async () => {
+    // No override -> not a disable intent, fetch failure is fatal.
+    await expect(service.map(1, "igdb", "dead-id")).rejects.toThrow();
+    expect(gameMetadataService.findOrCreateMinimalStub).not.toHaveBeenCalled();
+    expect(gameMetadataService.setProviderPriority).not.toHaveBeenCalled();
+  });
+
+  it("on the disable-intent fallback, applies the negative priority column-only (not via save())", async () => {
+    await service.map(1, "igdb", "dead-id", -1);
+    // setProviderPriority is a targeted UPDATE — it does not touch
+    // publishers/developers/tags/genres/title/cover/etc.
+    expect(gameMetadataService.setProviderPriority).toHaveBeenCalledTimes(1);
+    expect(gameMetadataService.setProviderPriority).toHaveBeenCalledWith(
+      EXISTING_META.id,
+      -1,
+    );
+  });
+
+  it("takes the normal save() path when the fetch succeeds (no regression on the healthy id case)", async () => {
+    // Replace the provider so its fetch succeeds this time.
+    (service as any).providers = [];
+    service.registerProvider(
+      createMockProvider({
+        slug: "igdb",
+        priority: 10,
+        getByProviderDataIdOrFail: vi.fn().mockResolvedValue({
+          provider_slug: "igdb",
+          provider_data_id: "healthy",
+          title: "Fresh",
+        }),
+      }),
+    );
+    await service.map(1, "igdb", "healthy", -1);
+    expect(gameMetadataService.save).toHaveBeenCalledTimes(1);
+    // Priority override still applied on the fetched payload.
+    expect(gameMetadataService.save).toHaveBeenCalledWith(
+      expect.objectContaining({ provider_priority: -1 }),
+    );
+    // Fallback helpers stay untouched on the success path.
+    expect(gameMetadataService.findOrCreateMinimalStub).not.toHaveBeenCalled();
+    expect(gameMetadataService.setProviderPriority).not.toHaveBeenCalled();
+  });
+});
+
 describe("Fork delta: relation loading is opt-in", () => {
   let service: GamesService;
   let gamesRepository: any;

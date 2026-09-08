@@ -272,4 +272,46 @@ export class GameMetadataService {
 
     return this.gameMetadataRepository.save(upsertedGame);
   }
+
+  /**
+   * Fork: find an existing metadata row for a (provider_slug, provider_data_id)
+   * pair, or create a minimal stub if none exists. Used by
+   * `MetadataService.map()`'s disable-intent fallback — when the caller sets
+   * `provider_priority < 0` and the provider fetch fails, we still need a row
+   * to attach the negative priority to. Never call this on the success path;
+   * `save()` remains the canonical upsert with the full fetched payload.
+   */
+  async findOrCreateMinimalStub(
+    providerSlug: string,
+    providerDataId: string,
+  ): Promise<GameMetadata> {
+    const existing = await this.gameMetadataRepository.findOne({
+      where: {
+        provider_slug: providerSlug,
+        provider_data_id: providerDataId,
+      },
+      loadEagerRelations: false,
+      relationLoadStrategy: "query",
+    });
+    if (existing) return existing;
+    return this.gameMetadataRepository.save({
+      provider_slug: providerSlug,
+      provider_data_id: providerDataId,
+    } as DeepPartial<GameMetadata>);
+  }
+
+  /**
+   * Fork: surgical UPDATE of provider_priority on an existing row. Used by
+   * `MetadataService.map()`'s disable-intent fallback so a failed provider
+   * fetch doesn't destroy the row's title/cover/description via `save()`'s
+   * upsert flow (which reassigns publishers/developers/tags/genres to []).
+   * The junction table linking metadata to the game is untouched — this is
+   * a column-only write on `game_metadata`.
+   */
+  async setProviderPriority(id: number, priority: number): Promise<void> {
+    await this.gameMetadataRepository.update(
+      { id },
+      { provider_priority: priority },
+    );
+  }
 }
