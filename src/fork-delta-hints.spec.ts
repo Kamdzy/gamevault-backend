@@ -179,17 +179,22 @@ describe("fork: version-tag id hints", () => {
     );
   });
 
-  it("rejects a hint that resolves to an unrelated title and falls back to title search", async () => {
-    // The poison case: a typo'd or mis-scraped id resolves perfectly, to the
-    // wrong game. Unlike a weak title match it looks authoritative, and the
-    // first match is the one that sticks — so it must be caught here.
+  it("trusts a resolved hint even when its title looks unrelated", async () => {
+    // The post-lookup similarity check was removed after live measurement:
+    // in 48 real firings it caught 0 true poisons and made 1 false rejection
+    // of a translated title. Character-bigram similarity cannot separate a
+    // legitimate translation/transliteration pair (0.10-0.20) from a random
+    // unrelated pair (0.15-0.25) — the distributions overlap.
+    //
+    // A wrong id in the filename still costs the user one manual re-map in
+    // the client. The pipeline design keeps that correction sticky forever
+    // (updateMetadata refreshes an existing mapping by its stored id and
+    // never re-runs matching — see the branch guarded by the test in
+    // "fork: hint fast-path never overrides an existing mapping").
     const provider = makeHintProvider();
     (provider.getByProviderDataIdOrFail as Mock).mockResolvedValue({
       provider_data_id: "ID00001",
-      title: "Completely Different Unrelated Product",
-    });
-    (provider.getBestMatch as Mock).mockResolvedValue({
-      provider_data_id: "ID77777",
+      title: "Entirely Different Looking Title",
     });
 
     await callFindMetadata(
@@ -198,17 +203,15 @@ describe("fork: version-tag id hints", () => {
       provider,
     );
 
-    expect(provider.getBestMatch).toHaveBeenCalled();
-    expect(mapSpy).toHaveBeenCalledWith(5, "test-provider", "ID77777");
+    expect(provider.getBestMatch).not.toHaveBeenCalled();
+    expect(mapSpy).toHaveBeenCalledWith(5, "test-provider", "ID00001");
   });
 
   it("accepts a hint whose resolved title is in a different script", async () => {
-    // REGRESSION GUARD. The similarity check is character-bigram based, so a
-    // transliterated filename scores ~0 against an original-script catalogue
-    // title even when both name the same release. An earlier version applied
-    // the threshold unconditionally and rejected every such match, which
-    // turned the whole fast-path into a no-op for non-Latin catalogues.
-    // The check must ABSTAIN when the scripts differ, not reject.
+    // The measured case that motivated dropping the guard: a transliterated
+    // filename and an original-script catalogue title share almost no
+    // characters. Trivially accepted now that there is no similarity check
+    // to fail; kept as a regression guard against re-introducing one.
     const provider = makeHintProvider();
     (provider.getByProviderDataIdOrFail as Mock).mockResolvedValue({
       provider_data_id: "ID54321",
@@ -217,35 +220,17 @@ describe("fork: version-tag id hints", () => {
 
     await callFindMetadata(
       service,
-      { id: 20, title: "Hoshi no Kakera ~Tooi Kioku~", version: "v1.0-xID54321" },
+      {
+        id: 20,
+        title: "Hoshi no Kakera ~Tooi Kioku~",
+        version: "v1.0-xID54321",
+      },
       provider,
     );
 
     expect(provider.getByProviderDataIdOrFail).toHaveBeenCalledWith("ID54321");
     expect(provider.getBestMatch).not.toHaveBeenCalled();
     expect(mapSpy).toHaveBeenCalledWith(20, "test-provider", "ID54321");
-  });
-
-  it("still rejects an unrelated title when both sides ARE comparable", async () => {
-    // The abstain above must not disable the guard for same-script titles,
-    // which is where a mis-scraped id is actually detectable.
-    const provider = makeHintProvider();
-    (provider.getByProviderDataIdOrFail as Mock).mockResolvedValue({
-      provider_data_id: "ID11223",
-      title: "Entirely Unrelated Widget Simulator",
-    });
-    (provider.getBestMatch as Mock).mockResolvedValue({
-      provider_data_id: "ID99999",
-    });
-
-    await callFindMetadata(
-      service,
-      { id: 21, title: "Quiet Harbour Nights", version: "v2.1-xID11223" },
-      provider,
-    );
-
-    expect(provider.getBestMatch).toHaveBeenCalled();
-    expect(mapSpy).toHaveBeenCalledWith(21, "test-provider", "ID99999");
   });
 
   it("falls back to title search when the id lookup throws", async () => {
