@@ -621,7 +621,9 @@ describe("Fork delta: map() with negative priority quarantines even when the pro
       generateSortTitle: vi.fn().mockReturnValue("sort"),
     };
     gameMetadataService = {
-      save: vi.fn().mockImplementation((m) => Promise.resolve({ id: 42, ...m })),
+      save: vi
+        .fn()
+        .mockImplementation((m) => Promise.resolve({ id: 42, ...m })),
       deleteByGameMetadataIdOrFail: vi.fn().mockResolvedValue(undefined),
       findOrCreateMinimalStub: vi.fn().mockResolvedValue({ ...EXISTING_META }),
       setProviderPriority: vi.fn().mockResolvedValue(undefined),
