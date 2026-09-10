@@ -280,6 +280,10 @@ const configuration = {
     SQLITEDB: parsePath(resolveEnv("VOLUMES_SQLITEDB"), "/db"),
     PLUGINS: parsePath(resolveEnv("VOLUMES_PLUGINS"), "/plugins"),
     SAVEFILES: parsePath(resolveEnv("VOLUMES_SAVEFILES"), "/savefiles"),
+    // Fork: operator-editable tag block/alias lists. Deliberately its own
+    // volume rather than a file under CONFIG, so it can be mounted on its
+    // own and survive container recreation. Absent directory = feature off.
+    TAGRULES: parsePath(resolveEnv("VOLUMES_TAGRULES"), "/tagrules"),
   } as const,
   DB: {
     SYSTEM: resolveEnv("DB_SYSTEM") || "POSTGRESQL",

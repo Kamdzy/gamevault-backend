@@ -22,6 +22,7 @@ import { GameMetadataService } from "./games/game.metadata.service.js";
 import { type MinimalGameMetadataDto } from "./games/minimal-game.metadata.dto.js";
 import { type MetadataProvider } from "./providers/abstract.metadata-provider.service.js";
 import { ProviderNotFoundException } from "./providers/models/provider-not-found.exception.js";
+import { getTagRules, resolveTagName } from "./tag-rules.js";
 
 const { kebabCase } = lodash;
 
@@ -808,26 +809,46 @@ export class MetadataService {
       if (merged.length) mutable[field] = merged;
     }
 
+    // Fork: operator-editable block/alias rules, applied to tags only. Read
+    // from a mounted directory (VOLUMES_TAGRULES) with an mtime check, so
+    // edits take effect without a restart and an absent directory is a no-op.
+    const tagRules = getTagRules(this.config.VOLUMES?.TAGRULES);
+
     for (const field of MetadataService.UNIONED_RELATION_FIELDS) {
       const merged: unknown[] = [];
       const seen = new Set<string>();
+      // Whether any provider offered entries at all. If they did but the
+      // union came out empty — every tag blocked, say — the field must be
+      // written as an empty array, otherwise the raw values the scalar
+      // spread copied in above would survive and the block would not apply.
+      let sawInput = false;
       for (const provider of byPriorityDesc) {
         const values = (provider as unknown as Record<string, unknown>)[field];
         if (!Array.isArray(values)) continue;
+        if (values.length) sawInput = true;
         for (const item of values as Array<{ name?: string }>) {
+          // Resolve BEFORE the dedupe key is computed, so aliased variants
+          // collapse into one row: "ADV" rewritten to "Adventure" kebabs to
+          // the same key the real "Adventure" tag does.
+          const name =
+            field === "tags"
+              ? resolveTagName(item?.name, tagRules)
+              : (item?.name ?? null);
+          if (name === null) continue;
+
           // Dedupe on the same key finalizeMetadata() will stamp downstream
           // (normalizeRelations sets provider_data_id = kebabCase(name)), so
           // "Action" from two providers collapses to one gamevault/action row.
-          const key = kebabCase(item?.name ?? "");
+          const key = kebabCase(name);
           if (!key || seen.has(key)) continue;
           seen.add(key);
           // Shallow copy: normalizeRelations mutates these in place (id =
           // undefined, provider_slug = "gamevault"). Copying keeps that off
           // the providers' own loaded entities.
-          merged.push({ ...item });
+          merged.push({ ...item, name });
         }
       }
-      if (merged.length) mutable[field] = merged;
+      if (merged.length || sawInput) mutable[field] = merged;
     }
 
     return result;
