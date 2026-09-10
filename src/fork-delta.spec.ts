@@ -739,7 +739,9 @@ describe("Fork delta: array metadata converges across providers", () => {
       configuration as any,
     );
     service.registerProvider(createMockProvider({ slug: "low", priority: 5 }));
-    service.registerProvider(createMockProvider({ slug: "high", priority: 10 }));
+    service.registerProvider(
+      createMockProvider({ slug: "high", priority: 10 }),
+    );
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -906,13 +908,81 @@ describe("Fork delta: array metadata converges across providers", () => {
     expect(merged.background.source_url).toBe("high-bg.jpg");
     expect(merged.url_screenshots).not.toContain("high-cover.jpg");
     expect(merged.url_screenshots).not.toContain("high-bg.jpg");
-    // low's art survives as extra screenshots.
+    // low's art survives as extra screenshots, appended after its own shots.
     expect(merged.url_screenshots).toEqual([
       "high-shot.jpg",
       "low-shot.jpg",
       "low-cover.jpg",
       "low-bg.jpg",
     ]);
+  });
+
+  /**
+   * Ordering contract across three providers, which is the shape that makes
+   * the per-provider blocks visible:
+   *   winner's screenshots (its cover/bg are excluded — already displayed)
+   *   -> mid's screenshots, cover, bg
+   *   -> low's screenshots, cover, bg
+   */
+  it("orders screenshots per provider: own shots, then folded art", () => {
+    service.registerProvider(createMockProvider({ slug: "mid", priority: 7 }));
+
+    const merged = apply([
+      {
+        provider_slug: "low",
+        url_screenshots: ["low-1.jpg"],
+        cover: { source_url: "low-cover.jpg" },
+        background: { source_url: "low-bg.jpg" },
+      },
+      {
+        provider_slug: "mid",
+        url_screenshots: ["mid-1.jpg"],
+        cover: { source_url: "mid-cover.jpg" },
+        background: { source_url: "mid-bg.jpg" },
+      },
+      {
+        provider_slug: "high",
+        url_screenshots: ["high-1.jpg", "high-2.jpg"],
+        cover: { source_url: "high-cover.jpg" },
+        background: { source_url: "high-bg.jpg" },
+      },
+    ]);
+
+    expect(merged.url_screenshots).toEqual([
+      "high-1.jpg",
+      "high-2.jpg",
+      "mid-1.jpg",
+      "mid-cover.jpg",
+      "mid-bg.jpg",
+      "low-1.jpg",
+      "low-cover.jpg",
+      "low-bg.jpg",
+    ]);
+  });
+
+  /**
+   * Videos live in their own columns and never interleave with screenshots —
+   * each array field is unioned independently, highest provider first.
+   */
+  it("unions trailers and gameplays independently of screenshots", () => {
+    const merged = apply([
+      {
+        provider_slug: "low",
+        url_trailers: ["low-trailer"],
+        url_gameplays: ["low-gameplay"],
+        url_screenshots: ["low-shot"],
+      },
+      {
+        provider_slug: "high",
+        url_trailers: ["high-trailer"],
+        url_gameplays: ["high-gameplay"],
+        url_screenshots: ["high-shot"],
+      },
+    ]);
+
+    expect(merged.url_trailers).toEqual(["high-trailer", "low-trailer"]);
+    expect(merged.url_gameplays).toEqual(["high-gameplay", "low-gameplay"]);
+    expect(merged.url_screenshots).toEqual(["high-shot", "low-shot"]);
   });
 
   /**

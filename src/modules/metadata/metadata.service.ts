@@ -775,6 +775,9 @@ export class MetadataService {
               ? [provider.provider_data_url]
               : [];
 
+        // Within one provider's block: its own array first, then the folded
+        // single-value extras. The winning provider's cover/background are
+        // already in `seen`, so its block is just its screenshots.
         for (const url of [...contributions, ...extras]) {
           if (!url) continue;
           const key = urlKey(url);
