@@ -908,23 +908,22 @@ describe("Fork delta: array metadata converges across providers", () => {
     expect(merged.background.source_url).toBe("high-bg.jpg");
     expect(merged.url_screenshots).not.toContain("high-cover.jpg");
     expect(merged.url_screenshots).not.toContain("high-bg.jpg");
-    // low's art survives as extra screenshots, appended after its own shots.
+    // Grouped by kind: all screenshots, then all backgrounds, then all covers.
     expect(merged.url_screenshots).toEqual([
       "high-shot.jpg",
       "low-shot.jpg",
-      "low-cover.jpg",
       "low-bg.jpg",
+      "low-cover.jpg",
     ]);
   });
 
   /**
-   * Ordering contract across three providers, which is the shape that makes
-   * the per-provider blocks visible:
-   *   winner's screenshots (its cover/bg are excluded — already displayed)
-   *   -> mid's screenshots, cover, bg
-   *   -> low's screenshots, cover, bg
+   * Ordering contract across three providers. Output is grouped by KIND, not
+   * by provider — every provider's screenshots first (descending priority),
+   * then every background, then every cover. The winner's cover/background
+   * are excluded throughout: they are already displayed as cover/background.
    */
-  it("orders screenshots per provider: own shots, then folded art", () => {
+  it("groups screenshots by kind: all shots, then all backgrounds, then all covers", () => {
     service.registerProvider(createMockProvider({ slug: "mid", priority: 7 }));
 
     const merged = apply([
@@ -949,14 +948,17 @@ describe("Fork delta: array metadata converges across providers", () => {
     ]);
 
     expect(merged.url_screenshots).toEqual([
+      // pass 1 — every provider's screenshots, descending priority
       "high-1.jpg",
       "high-2.jpg",
       "mid-1.jpg",
-      "mid-cover.jpg",
-      "mid-bg.jpg",
       "low-1.jpg",
-      "low-cover.jpg",
+      // pass 2 — every provider's background (high's won, so excluded)
+      "mid-bg.jpg",
       "low-bg.jpg",
+      // pass 3 — every provider's cover (high's won, so excluded)
+      "mid-cover.jpg",
+      "low-cover.jpg",
     ]);
   });
 
@@ -1004,10 +1006,12 @@ describe("Fork delta: array metadata converges across providers", () => {
       },
     ]);
 
+    // Grouped by kind, same as screenshots: every provider's url_websites
+    // first, then every provider's own page link.
     expect(merged.url_websites).toEqual([
       "https://high-site.example",
-      "https://high.example/game",
       "https://low-site.example",
+      "https://high.example/game",
       "https://low.example/game",
     ]);
   });

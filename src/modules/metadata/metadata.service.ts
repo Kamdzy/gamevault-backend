@@ -688,6 +688,11 @@ export class MetadataService {
    * discarded when their provider loses the scalar merge:
    *   cover / background  -> url_screenshots  (art already downloaded)
    *   provider_data_url   -> url_websites     (each provider's own page)
+   *
+   * The url_* unions are grouped by KIND, not by provider — all screenshots
+   * (highest provider first), then all backgrounds, then all covers. Grouping
+   * by provider instead would scatter box art through the middle of the
+   * gameplay imagery.
    */
   private static readonly UNIONED_URL_FIELDS = [
     "url_screenshots",
@@ -741,6 +746,39 @@ export class MetadataService {
     // the highest-priority provider supplied.
     const urlKey = (url: string): string => url.replace(/\/+$/, "");
 
+    // Fork: each url_* field is assembled from one or more PASSES. A pass runs
+    // over every provider in descending priority before the next pass begins,
+    // so output is grouped by KIND rather than by provider:
+    //
+    //   url_screenshots -> all screenshots, then all backgrounds, then all covers
+    //   url_websites    -> all site links,  then all provider page links
+    //
+    // Folding cover/background/provider_data_url in at all is the point: they
+    // are single-value fields, so without this a non-winning provider's
+    // artwork and page link would simply be discarded. provider_data_url is
+    // the only scalar where losing providers hold genuinely unique data —
+    // steam's row cannot supply igdb's URL.
+    const passesFor = (
+      field: string,
+    ): Array<(p: GameMetadata) => Array<string | undefined>> => {
+      if (field === "url_screenshots") {
+        return [
+          (p) => p.url_screenshots ?? [],
+          (p) => [p.background?.source_url],
+          (p) => [p.cover?.source_url],
+        ];
+      }
+      if (field === "url_websites") {
+        return [(p) => p.url_websites ?? [], (p) => [p.provider_data_url]];
+      }
+      return [
+        (p) => {
+          const values = (p as unknown as Record<string, unknown>)[field];
+          return Array.isArray(values) ? (values as string[]) : [];
+        },
+      ];
+    };
+
     for (const field of MetadataService.UNIONED_URL_FIELDS) {
       const merged: string[] = [];
       const seen = new Set<string>();
@@ -756,34 +794,15 @@ export class MetadataService {
         }
       }
 
-      for (const provider of byPriorityDesc) {
-        const values = (provider as unknown as Record<string, unknown>)[field];
-        const contributions: string[] = Array.isArray(values)
-          ? (values as string[])
-          : [];
-
-        // Fork: fold single-value assets into the union they belong to, so a
-        // non-winning provider's artwork and page link are not discarded.
-        //   - every provider's cover/background become extra screenshots
-        //   - every provider's own page URL becomes an extra website link
-        // provider_data_url is the only scalar where the losing providers hold
-        // genuinely unique information: steam's row cannot supply igdb's URL.
-        const extras: Array<string | undefined> =
-          field === "url_screenshots"
-            ? [provider.cover?.source_url, provider.background?.source_url]
-            : field === "url_websites"
-              ? [provider.provider_data_url]
-              : [];
-
-        // Within one provider's block: its own array first, then the folded
-        // single-value extras. The winning provider's cover/background are
-        // already in `seen`, so its block is just its screenshots.
-        for (const url of [...contributions, ...extras]) {
-          if (!url) continue;
-          const key = urlKey(url);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          merged.push(url);
+      for (const pass of passesFor(field)) {
+        for (const provider of byPriorityDesc) {
+          for (const url of pass(provider)) {
+            if (!url) continue;
+            const key = urlKey(url);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(url);
+          }
         }
       }
       if (merged.length) mutable[field] = merged;
