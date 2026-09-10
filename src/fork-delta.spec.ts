@@ -711,6 +711,238 @@ describe("Fork delta: map() with negative priority quarantines even when the pro
   });
 });
 
+/**
+ * Fork: upstream's merge is a plain spread, so for every field the
+ * highest-priority provider with a non-empty value wins outright. For arrays
+ * that silently discards data — a game matched to two providers holding 3 and
+ * 2 screenshots displayed 2, not 5. The fork unions the array-valued fields
+ * (4 url_* string arrays + tags/genres/developers/publishers) across every
+ * mergeable provider, in DESCENDING priority order so the best provider leads.
+ *
+ * Relation entries dedupe on kebabCase(name) — the same key
+ * finalizeMetadata()'s normalizeRelations stamps downstream — so "Action" from
+ * two providers collapses to one row.
+ *
+ * Mutation-verified: deleting the two union loops from applyProviderMetadata
+ * makes every test in this block fail.
+ */
+describe("Fork delta: array metadata converges across providers", () => {
+  let service: MetadataService;
+
+  const apply = (providerMetadata: any[]): any =>
+    (service as any).applyProviderMetadata({}, providerMetadata);
+
+  beforeEach(() => {
+    service = new MetadataService(
+      { findOneByGameIdOrFail: vi.fn(), save: vi.fn() } as any,
+      { save: vi.fn(), deleteByGameMetadataIdOrFail: vi.fn() } as any,
+      configuration as any,
+    );
+    service.registerProvider(createMockProvider({ slug: "low", priority: 5 }));
+    service.registerProvider(createMockProvider({ slug: "high", priority: 10 }));
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("unions url_screenshots instead of letting the top provider replace them", () => {
+    const merged = apply([
+      { provider_slug: "low", url_screenshots: ["a.jpg", "b.jpg", "c.jpg"] },
+      { provider_slug: "high", url_screenshots: ["x.jpg", "y.jpg"] },
+    ]);
+
+    expect(merged.url_screenshots).toHaveLength(5);
+    // Highest priority first.
+    expect(merged.url_screenshots).toEqual([
+      "x.jpg",
+      "y.jpg",
+      "a.jpg",
+      "b.jpg",
+      "c.jpg",
+    ]);
+  });
+
+  it("dedupes identical urls contributed by more than one provider", () => {
+    const merged = apply([
+      { provider_slug: "low", url_screenshots: ["shared.jpg", "only-low.jpg"] },
+      { provider_slug: "high", url_screenshots: ["shared.jpg"] },
+    ]);
+
+    expect(merged.url_screenshots).toEqual(["shared.jpg", "only-low.jpg"]);
+  });
+
+  /**
+   * Providers disagree about trailing slashes on the same page — steam's
+   * url_websites carries ".../app/3449040/" while its provider_data_url
+   * carries ".../app/3449040". Dedupe on a normalised key so they collapse.
+   */
+  it("treats urls differing only by a trailing slash as one", () => {
+    const merged = apply([
+      {
+        provider_slug: "low",
+        url_websites: ["https://store.example/app/1/", "https://other.example"],
+      },
+      { provider_slug: "high", url_websites: ["https://store.example/app/1"] },
+    ]);
+
+    expect(merged.url_websites).toEqual([
+      // high supplied it first, so its slash-less form is the one stored.
+      "https://store.example/app/1",
+      "https://other.example",
+    ]);
+  });
+
+  it("unions every url_* field, not just screenshots", () => {
+    const merged = apply([
+      {
+        provider_slug: "low",
+        url_trailers: ["t1"],
+        url_gameplays: ["g1"],
+        url_websites: ["w1"],
+      },
+      {
+        provider_slug: "high",
+        url_trailers: ["t2"],
+        url_gameplays: ["g2"],
+        url_websites: ["w2"],
+      },
+    ]);
+
+    expect(merged.url_trailers).toEqual(["t2", "t1"]);
+    expect(merged.url_gameplays).toEqual(["g2", "g1"]);
+    expect(merged.url_websites).toEqual(["w2", "w1"]);
+  });
+
+  it("unions tags/genres/developers/publishers, deduping on kebabCase(name)", () => {
+    const merged = apply([
+      {
+        provider_slug: "low",
+        tags: [{ name: "Action" }, { name: "Only Low" }],
+        genres: [{ name: "RPG" }],
+        developers: [{ name: "Studio A" }],
+        publishers: [{ name: "Pub A" }],
+      },
+      {
+        provider_slug: "high",
+        // "ACTION!" kebabs to "action", same as low's "Action".
+        tags: [{ name: "ACTION!" }, { name: "Only High" }],
+        genres: [{ name: "Adventure" }],
+        developers: [{ name: "Studio B" }],
+        publishers: [{ name: "Pub B" }],
+      },
+    ]);
+
+    expect(merged.tags.map((t: any) => t.name)).toEqual([
+      "ACTION!",
+      "Only High",
+      "Only Low",
+    ]);
+    expect(merged.genres.map((g: any) => g.name)).toEqual(["Adventure", "RPG"]);
+    expect(merged.developers.map((d: any) => d.name)).toEqual([
+      "Studio B",
+      "Studio A",
+    ]);
+    expect(merged.publishers.map((p: any) => p.name)).toEqual([
+      "Pub B",
+      "Pub A",
+    ]);
+  });
+
+  it("copies relation entries so normalizeRelations cannot mutate provider rows", () => {
+    const providerTag = { id: 7, provider_slug: "low", name: "Action" };
+    const merged = apply([{ provider_slug: "low", tags: [providerTag] }]);
+
+    expect(merged.tags[0]).not.toBe(providerTag);
+    merged.tags[0].id = undefined;
+    merged.tags[0].provider_slug = "gamevault";
+    // The provider's own loaded entity is untouched.
+    expect(providerTag.id).toBe(7);
+    expect(providerTag.provider_slug).toBe("low");
+  });
+
+  it("leaves scalar fields on last-writer-wins", () => {
+    const merged = apply([
+      { provider_slug: "low", title: "Low Title", rating: 50 },
+      { provider_slug: "high", title: "High Title" },
+    ]);
+
+    // Highest priority wins the title; rating survives because high left it empty.
+    expect(merged.title).toBe("High Title");
+    expect(merged.rating).toBe(50);
+  });
+
+  it("ignores providers that contribute an empty array", () => {
+    const merged = apply([
+      { provider_slug: "low", url_screenshots: ["a.jpg"] },
+      { provider_slug: "high", url_screenshots: [] },
+    ]);
+
+    expect(merged.url_screenshots).toEqual(["a.jpg"]);
+  });
+
+  /**
+   * A non-winning provider's cover/background is artwork that was already
+   * downloaded and would otherwise be thrown away, so it is folded into the
+   * screenshot union. The cover/background that DID win the scalar merge are
+   * excluded — they are already displayed as cover/background.
+   */
+  it("folds losing providers' cover and background into url_screenshots", () => {
+    const merged = apply([
+      {
+        provider_slug: "low",
+        url_screenshots: ["low-shot.jpg"],
+        cover: { source_url: "low-cover.jpg" },
+        background: { source_url: "low-bg.jpg" },
+      },
+      {
+        provider_slug: "high",
+        url_screenshots: ["high-shot.jpg"],
+        cover: { source_url: "high-cover.jpg" },
+        background: { source_url: "high-bg.jpg" },
+      },
+    ]);
+
+    // high won cover/background on the scalar merge, so they are NOT screenshots.
+    expect(merged.cover.source_url).toBe("high-cover.jpg");
+    expect(merged.background.source_url).toBe("high-bg.jpg");
+    expect(merged.url_screenshots).not.toContain("high-cover.jpg");
+    expect(merged.url_screenshots).not.toContain("high-bg.jpg");
+    // low's art survives as extra screenshots.
+    expect(merged.url_screenshots).toEqual([
+      "high-shot.jpg",
+      "low-shot.jpg",
+      "low-cover.jpg",
+      "low-bg.jpg",
+    ]);
+  });
+
+  /**
+   * provider_data_url is the one scalar where losing providers hold uniquely
+   * useful data — steam's row cannot supply igdb's page link — so every
+   * provider's own URL is folded into the websites union.
+   */
+  it("folds every provider's provider_data_url into url_websites", () => {
+    const merged = apply([
+      {
+        provider_slug: "low",
+        provider_data_url: "https://low.example/game",
+        url_websites: ["https://low-site.example"],
+      },
+      {
+        provider_slug: "high",
+        provider_data_url: "https://high.example/game",
+        url_websites: ["https://high-site.example"],
+      },
+    ]);
+
+    expect(merged.url_websites).toEqual([
+      "https://high-site.example",
+      "https://high.example/game",
+      "https://low-site.example",
+      "https://low.example/game",
+    ]);
+  });
+});
+
 describe("Fork delta: relation loading is opt-in", () => {
   let service: GamesService;
   let gamesRepository: any;

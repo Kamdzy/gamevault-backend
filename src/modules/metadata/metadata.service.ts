@@ -672,7 +672,40 @@ export class MetadataService {
   }
 
   /**
-   * Applies provider metadata in priority order (lowest first).
+   * Fork: array-valued fields that CONVERGE across providers instead of being
+   * replaced wholesale by the highest-priority one.
+   *
+   * Upstream's merge is a plain spread — `{...result, ...provider}` — so for
+   * every field the last (highest-priority) provider with a non-empty value
+   * wins outright. For scalars that is correct: you want one title, one cover.
+   * For arrays it silently discards data: a game matched to two providers with
+   * 3 and 2 screenshots showed 2, not 5.
+   *
+   * These lists are unioned in DESCENDING priority order, so the best
+   * provider's entries lead.
+   *
+   * Two single-value fields are folded into these unions rather than being
+   * discarded when their provider loses the scalar merge:
+   *   cover / background  -> url_screenshots  (art already downloaded)
+   *   provider_data_url   -> url_websites     (each provider's own page)
+   */
+  private static readonly UNIONED_URL_FIELDS = [
+    "url_screenshots",
+    "url_trailers",
+    "url_gameplays",
+    "url_websites",
+  ] as const;
+
+  private static readonly UNIONED_RELATION_FIELDS = [
+    "publishers",
+    "developers",
+    "tags",
+    "genres",
+  ] as const;
+
+  /**
+   * Applies provider metadata in priority order (lowest first), then unions
+   * the array-valued fields across every provider (highest first).
    */
   private applyProviderMetadata(
     base: GameMetadata,
@@ -694,6 +727,85 @@ export class MetadataService {
         ...result,
         ...this.stripEmptyFields(provider),
       } as GameMetadata;
+    }
+
+    // Fork: converge the array fields. Callers pass only mergeable providers
+    // (getMergeableProviderMetadata already dropped anything with an effective
+    // priority < 0), so a quarantined provider contributes nothing here.
+    const byPriorityDesc = sortedProviders.toReversed();
+    const mutable = result as unknown as Record<string, unknown>;
+
+    // Fork: dedupe URLs on a trailing-slash-normalised key, so a provider's
+    // ".../app/3449040/" and another's ".../app/3449040" collapse to one
+    // entry. Only the KEY is normalised — the URL stored is whichever form
+    // the highest-priority provider supplied.
+    const urlKey = (url: string): string => url.replace(/\/+$/, "");
+
+    for (const field of MetadataService.UNIONED_URL_FIELDS) {
+      const merged: string[] = [];
+      const seen = new Set<string>();
+
+      // Fork: the cover/background that won the scalar merge are already
+      // shown as cover/background — don't also list them as screenshots.
+      if (field === "url_screenshots") {
+        for (const won of [
+          result.cover?.source_url,
+          result.background?.source_url,
+        ]) {
+          if (won) seen.add(urlKey(won));
+        }
+      }
+
+      for (const provider of byPriorityDesc) {
+        const values = (provider as unknown as Record<string, unknown>)[field];
+        const contributions: string[] = Array.isArray(values)
+          ? (values as string[])
+          : [];
+
+        // Fork: fold single-value assets into the union they belong to, so a
+        // non-winning provider's artwork and page link are not discarded.
+        //   - every provider's cover/background become extra screenshots
+        //   - every provider's own page URL becomes an extra website link
+        // provider_data_url is the only scalar where the losing providers hold
+        // genuinely unique information: steam's row cannot supply igdb's URL.
+        const extras: Array<string | undefined> =
+          field === "url_screenshots"
+            ? [provider.cover?.source_url, provider.background?.source_url]
+            : field === "url_websites"
+              ? [provider.provider_data_url]
+              : [];
+
+        for (const url of [...contributions, ...extras]) {
+          if (!url) continue;
+          const key = urlKey(url);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(url);
+        }
+      }
+      if (merged.length) mutable[field] = merged;
+    }
+
+    for (const field of MetadataService.UNIONED_RELATION_FIELDS) {
+      const merged: unknown[] = [];
+      const seen = new Set<string>();
+      for (const provider of byPriorityDesc) {
+        const values = (provider as unknown as Record<string, unknown>)[field];
+        if (!Array.isArray(values)) continue;
+        for (const item of values as Array<{ name?: string }>) {
+          // Dedupe on the same key finalizeMetadata() will stamp downstream
+          // (normalizeRelations sets provider_data_id = kebabCase(name)), so
+          // "Action" from two providers collapses to one gamevault/action row.
+          const key = kebabCase(item?.name ?? "");
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          // Shallow copy: normalizeRelations mutates these in place (id =
+          // undefined, provider_slug = "gamevault"). Copying keeps that off
+          // the providers' own loaded entities.
+          merged.push({ ...item });
+        }
+      }
+      if (merged.length) mutable[field] = merged;
     }
 
     return result;
