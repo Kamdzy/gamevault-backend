@@ -322,6 +322,53 @@ describe("fork: version-tag id hints", () => {
 
     expect(provider.getByProviderDataIdOrFail).toHaveBeenCalledWith("ID65432");
   });
+
+  it("prefers an earlier hintPattern over a later one, whatever the segment order", async () => {
+    // hintPatterns is a PRIORITY LIST, so resolveByHint iterates pattern-major.
+    // The real case: a ryuugames page links both the VNDB release and its
+    // parent VN, so a filename can carry `vndb30250` and `vndbR143210`
+    // together. Segment-major made whichever was typed first win, silently
+    // collapsing a specific edition onto the original VN's cover and date.
+    // Here the LOW-priority shape is deliberately placed first in the tag.
+    const provider = makeHintProvider({
+      hintPatterns: [/x(R\d{4,})/i, /x(\d{4,})/i],
+      decodeHint: (raw: string) => raw.toUpperCase(),
+    });
+    (provider.getByProviderDataIdOrFail as Mock).mockResolvedValue({
+      provider_data_id: "R67890",
+      title: "Some Edition",
+    });
+
+    await callFindMetadata(
+      service,
+      { id: 20, title: "Some Game", version: "v1.0-x12345-xR67890" },
+      provider,
+    );
+
+    expect(provider.getByProviderDataIdOrFail).toHaveBeenCalledWith("R67890");
+    expect(provider.getByProviderDataIdOrFail).not.toHaveBeenCalledWith("12345");
+    expect(mapSpy).toHaveBeenCalledWith(20, "test-provider", "R67890");
+  });
+
+  it("falls back to a later hintPattern when the preferred one does not match", async () => {
+    const provider = makeHintProvider({
+      hintPatterns: [/x(R\d{4,})/i, /x(\d{4,})/i],
+      decodeHint: (raw: string) => raw.toUpperCase(),
+    });
+    (provider.getByProviderDataIdOrFail as Mock).mockResolvedValue({
+      provider_data_id: "12345",
+      title: "Some Game",
+    });
+
+    await callFindMetadata(
+      service,
+      { id: 21, title: "Some Game", version: "v1.0-x12345" },
+      provider,
+    );
+
+    expect(provider.getByProviderDataIdOrFail).toHaveBeenCalledWith("12345");
+    expect(mapSpy).toHaveBeenCalledWith(21, "test-provider", "12345");
+  });
 });
 
 describe("fork: hint fast-path never overrides an existing mapping", () => {

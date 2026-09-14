@@ -433,13 +433,23 @@ export class MetadataService {
     const segments = this.extractHintSegments(game.version);
     if (!segments.length) return undefined;
 
-    for (const segment of segments) {
-      for (const pattern of provider.hintPatterns) {
-        // Patterns are matched anywhere inside a segment, so strip the global
-        // flag to keep `lastIndex` from leaking between iterations.
-        const match = segment.match(
-          new RegExp(pattern.source, pattern.flags.replace(/g/g, "")),
-        );
+    // Pattern-major, NOT segment-major: `hintPatterns` is a priority list, so
+    // an earlier pattern beats a later one no matter where each id sits in the
+    // filename. A ryuugames page links both the VNDB release and its parent VN,
+    // so a name can legitimately carry `vndb30250` and `vndbR143210` together;
+    // segment-major made whichever was typed first win, which silently
+    // collapsed a specific edition onto the original VN's cover and date.
+    // The backend stays id-namespace-agnostic — the plugin expresses the
+    // preference purely by the order it declares its patterns in.
+    for (const pattern of provider.hintPatterns) {
+      // Patterns are matched anywhere inside a segment, so strip the global
+      // flag to keep `lastIndex` from leaking between iterations.
+      const compiled = new RegExp(
+        pattern.source,
+        pattern.flags.replace(/g/g, ""),
+      );
+      for (const segment of segments) {
+        const match = segment.match(compiled);
         if (!match) continue;
 
         const rawHint = match[1] ?? match[0];
