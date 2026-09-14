@@ -12,6 +12,7 @@
  * See CLAUDE.md → "Preserving the Fork Across Upstream Merges".
  */
 
+import { NotFoundException } from "@nestjs/common";
 import type { Mock } from "vitest";
 import configuration from "./configuration.js";
 import { GamesService } from "./modules/games/games.service.js";
@@ -1175,5 +1176,169 @@ describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
     });
 
     expect(usersService.findUserForAuthOrFail).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Fork delta: a search that found nothing is remembered", () => {
+  let service: MetadataService;
+  let gamesService: any;
+
+  beforeEach(() => {
+    gamesService = {
+      findOneByGameIdOrFail: vi.fn(),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort-title"),
+    };
+    service = new MetadataService(
+      gamesService,
+      { save: vi.fn(), deleteByGameMetadataIdOrFail: vi.fn() } as any,
+      configuration as any,
+    );
+    vi.spyOn(service, "merge").mockResolvedValue({} as any);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  /** The internals this contract is about, reached without exporting them. */
+  function misses(svc: MetadataService) {
+    return (
+      svc as unknown as {
+        searchMisses: Map<string, { at: number; signature: string }>;
+      }
+    ).searchMisses;
+  }
+
+  function missingProvider(slug: string) {
+    const provider = createMockProvider({ slug, priority: 10 });
+    (provider.getBestMatch as Mock).mockRejectedValue(
+      new NotFoundException("no match"),
+    );
+    return provider;
+  }
+
+  /**
+   * THE contract. A successful search writes a game_metadata row and the TTL
+   * check then skips that pair for 30 days; a failed one wrote nothing, so it
+   * could never be skipped and re-ran every lap forever. Measured live before
+   * the fix: 935 searches an hour, 935 of them misses, and a lap that took ~18
+   * hours against an index refilling the queue every 60 minutes.
+   */
+  it("does not repeat a search that already found nothing", async () => {
+    const provider = missingProvider("dlsite");
+    service.registerProvider(provider);
+
+    gamesService.findOneByGameIdOrFail.mockResolvedValue({
+      id: 11,
+      title: "Some Game",
+      version: "1.0",
+      versions: [],
+      file_path: "/games/Some Game (v1.0) (W_P) (2026).7z",
+      provider_metadata: [],
+    });
+
+    await service.addUpdateMetadataJob(11);
+    await drainMetadataQueue(service);
+    await service.addUpdateMetadataJob(11);
+    await drainMetadataQueue(service);
+
+    expect(provider.getBestMatch).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The cache must not become a trap. Renaming a file to add an id hint is the
+   * operator's way of fixing a bad match - if a remembered miss suppressed the
+   * re-search, the fix would never take effect.
+   */
+  it("searches again once the version tag changes", async () => {
+    const provider = missingProvider("dlsite");
+    service.registerProvider(provider);
+
+    const game = {
+      id: 12,
+      title: "Some Game",
+      version: "1.0",
+      versions: [],
+      file_path: "/games/Some Game (v1.0) (W_P) (2026).7z",
+      provider_metadata: [],
+    };
+    gamesService.findOneByGameIdOrFail.mockResolvedValue(game);
+
+    await service.addUpdateMetadataJob(12);
+    await drainMetadataQueue(service);
+
+    // The operator renamed the file to carry a DLSite id.
+    game.version = "1.0-RJ01540609";
+
+    await service.addUpdateMetadataJob(12);
+    await drainMetadataQueue(service);
+
+    expect(provider.getBestMatch).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * A miss goes quiet for the same TTL a hit does - a provider that did not
+   * have the game a month ago may have it now.
+   */
+  it("searches again once the miss is older than the TTL", async () => {
+    const provider = missingProvider("dlsite");
+    service.registerProvider(provider);
+
+    gamesService.findOneByGameIdOrFail.mockResolvedValue({
+      id: 13,
+      title: "Some Game",
+      version: "1.0",
+      versions: [],
+      file_path: "/games/Some Game (v1.0) (W_P) (2026).7z",
+      provider_metadata: [],
+    });
+
+    await service.addUpdateMetadataJob(13);
+    await drainMetadataQueue(service);
+    expect(provider.getBestMatch).toHaveBeenCalledTimes(1);
+
+    // Age the recorded miss past TTL_IN_DAYS.
+    const entry = misses(service).get("13:dlsite")!;
+    entry.at = Date.now() - 31 * 24 * 60 * 60 * 1000;
+
+    await service.addUpdateMetadataJob(13);
+    await drainMetadataQueue(service);
+
+    expect(provider.getBestMatch).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The skip is gated on there being no existing row. A stale row takes the
+   * map() path, which is a deterministic id lookup rather than a search, and
+   * must still refresh - otherwise the fix would freeze existing metadata.
+   */
+  it("still refreshes a stale existing row for a provider that once missed", async () => {
+    const provider = missingProvider("dlsite");
+    service.registerProvider(provider);
+    const mapSpy = vi.spyOn(service as any, "map").mockResolvedValue(undefined);
+
+    misses(service).set("14:dlsite", {
+      at: Date.now(),
+      signature: "Some Game|1.0",
+    });
+
+    gamesService.findOneByGameIdOrFail.mockResolvedValue({
+      id: 14,
+      title: "Some Game",
+      version: "1.0",
+      versions: [],
+      file_path: "/games/Some Game (v1.0) (W_P) (2026).7z",
+      provider_metadata: [
+        {
+          provider_slug: "dlsite",
+          provider_data_id: "RJ01540609",
+          updated_at: new Date("2000-01-01"), // far outside TTL
+        },
+      ],
+    });
+
+    await service.addUpdateMetadataJob(14);
+    await drainMetadataQueue(service);
+
+    expect(mapSpy).toHaveBeenCalledWith(14, "dlsite", "RJ01540609");
   });
 });

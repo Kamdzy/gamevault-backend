@@ -65,6 +65,30 @@ export class MetadataService {
   private isProcessingQueue = false;
   providers: MetadataProvider[] = [];
 
+  /**
+   * Fork: (game, provider) pairs whose search found nothing, and when.
+   *
+   * A search that SUCCEEDS writes a game_metadata row, and the TTL check in
+   * updateMetadata() then skips that pair for TTL_IN_DAYS. A search that FAILS
+   * writes nothing, so it could never be skipped - every lap re-ran the
+   * identical doomed search and paid request_interval_ms to do it.
+   *
+   * Because successes go quiet for a month and failures never do, the queue's
+   * steady state was entirely searches that had never once worked. Measured
+   * live on 2026-09-14: 935 searches in an hour, 935 of them misses, 46% of
+   * the wall clock asleep in rate-limit delays, and a full lap taking ~18
+   * hours against an index that refills the queue every 60 minutes - so no lap
+   * ever finished, and a newly indexed game waited most of a day.
+   *
+   * Keyed "<gameId>:<slug>". Bounded by library x providers (~17k entries,
+   * ~2 MB) rather than growing without limit, which matters in this fork - see
+   * the OOM campaign. Entries for deleted games linger until restart.
+   */
+  private readonly searchMisses = new Map<
+    string,
+    { at: number; signature: string }
+  >();
+
   constructor(
     @Inject(forwardRef(() => GamesService))
     // Cyclic service reference (ESM): intentionally loosely typed to avoid design:paramtypes TDZ
@@ -156,6 +180,56 @@ export class MetadataService {
     const globalPriority = this.getProviderBySlugOrFail(providerSlug).priority;
     const effectivePriority = providerPriorityOverride ?? globalPriority;
     return effectivePriority < 0;
+  }
+
+  /**
+   * The game's identity as the matcher actually sees it.
+   *
+   * This is what keeps the miss cache from becoming a trap. Title and version
+   * are the only inputs a search has - getBestMatch() matches on the title and
+   * resolveByHint() reads ids out of the version tag - so if neither has
+   * changed, re-running the search cannot produce a different answer. If
+   * either HAS changed, the recorded miss is about a different question and is
+   * discarded. That is what makes renaming a file to add an id hint take
+   * effect on the next lap instead of being suppressed by the very cache meant
+   * to stop wasted work.
+   */
+  private searchSignature(game: GamevaultGame): string {
+    return `${game.title ?? ""}|${game.version ?? ""}`;
+  }
+
+  /** True when this pair was searched recently, unchanged, and found nothing. */
+  private hasRecentSearchMiss(
+    game: GamevaultGame,
+    providerSlug: string,
+  ): boolean {
+    const key = `${game.id}:${providerSlug}`;
+    const miss = this.searchMisses.get(key);
+    if (!miss) {
+      return false;
+    }
+    // The game was renamed or re-versioned: this miss answered a different
+    // question, so forget it and let the search run again.
+    if (miss.signature !== this.searchSignature(game)) {
+      this.searchMisses.delete(key);
+      return false;
+    }
+    // Retried on the same cadence a successful match is refreshed - a provider
+    // that did not have the game a month ago may have it now.
+    const ttlMs =
+      (this.config.METADATA.TTL_IN_DAYS ?? 30) * 24 * 60 * 60 * 1000;
+    if (miss.at <= Date.now() - ttlMs) {
+      this.searchMisses.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  private recordSearchMiss(game: GamevaultGame, providerSlug: string): void {
+    this.searchMisses.set(`${game.id}:${providerSlug}`, {
+      at: Date.now(),
+      signature: this.searchSignature(game),
+    });
   }
 
   async addUpdateMetadataJob(gameId: number): Promise<void> {
@@ -323,6 +397,29 @@ export class MetadataService {
         ) {
           this.logger.debug({
             message: "Metadata is already up to date. Skipping.",
+            game: logGamevaultGame(game),
+            provider: logMetadataProvider(provider),
+          });
+          continue;
+        }
+
+        // Fork: this pair was searched recently and found nothing, and neither
+        // the title nor the version has changed since. Re-running it cannot
+        // produce a different answer.
+        //
+        // Deliberately gated on there being NO existing row: a stale row takes
+        // the map() path below, which is a deterministic id lookup rather than
+        // a search, and must still run.
+        //
+        // Placed BEFORE the rate-limit delay because the delay is most of the
+        // cost - 46% of the queue's wall clock was spent sleeping ahead of
+        // searches that had never once succeeded.
+        if (
+          !existingProviderMetadata &&
+          this.hasRecentSearchMiss(game, provider.slug)
+        ) {
+          this.logger.debug({
+            message: "Search returned no match recently. Skipping.",
             game: logGamevaultGame(game),
             provider: logMetadataProvider(provider),
           });
@@ -517,6 +614,15 @@ export class MetadataService {
       );
     } catch (error) {
       if (error instanceof NotFoundException) {
+        // Fork: remember the miss the way a hit is remembered. Without this
+        // the pair has no row, so the TTL check upstream of here can never
+        // skip it and the same failing search repeats every lap forever.
+        //
+        // A resolved hint returns above and never reaches this, so only a
+        // genuine "not found" is recorded - including a hint whose id no
+        // longer resolves, which is also correctly a miss until the filename
+        // changes.
+        this.recordSearchMiss(game, provider.slug);
         this.logger.debug({
           message: "No matching game found.",
           game: logGamevaultGame(game),
