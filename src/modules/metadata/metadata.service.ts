@@ -6,10 +6,14 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  type OnModuleInit,
+  Optional,
 } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
 import { validateOrReject } from "class-validator";
 import lodash from "lodash";
 import { setTimeout } from "timers/promises";
+import { Repository } from "typeorm";
 import type { AppConfiguration } from "../../configuration.js";
 import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator.js";
 import globals from "../../globals.js";
@@ -22,6 +26,7 @@ import { GameMetadataService } from "./games/game.metadata.service.js";
 import { type MinimalGameMetadataDto } from "./games/minimal-game.metadata.dto.js";
 import { type MetadataProvider } from "./providers/abstract.metadata-provider.service.js";
 import { ProviderNotFoundException } from "./providers/models/provider-not-found.exception.js";
+import { MetadataSearchMiss } from "./search-miss/metadata-search-miss.entity.js";
 import { getTagRules, resolveTagName } from "./tag-rules.js";
 
 const { kebabCase } = lodash;
@@ -57,7 +62,7 @@ const CASCADE_SAFE_METADATA_RELATIONS: string[] = [
 ]);
 
 @Injectable()
-export class MetadataService {
+export class MetadataService implements OnModuleInit {
   private readonly logger = new Logger(this.constructor.name);
   // Fork (2d99061): IDs only. Holding GamevaultGame entities pinned
   // thousands of fully-hydrated games in heap during a full re-index.
@@ -95,7 +100,45 @@ export class MetadataService {
     private readonly gamesService: any,
     private readonly gameMetadataService: GameMetadataService,
     @InjectGamevaultConfig() private readonly config: AppConfiguration,
+    // Optional on purpose. This is a cache, not data: if the repository is
+    // unavailable the service keeps the misses in memory only and behaves
+    // exactly as it did before the table existed. A database problem must not
+    // be able to stop metadata processing, and the 41 contract tests construct
+    // this service directly with three arguments.
+    @Optional()
+    @InjectRepository(MetadataSearchMiss)
+    private readonly searchMissRepository?: Repository<MetadataSearchMiss>,
   ) {}
+
+  /**
+   * Load the persisted search misses so a restart does not replay a full-price
+   * lap. Failure here is logged and otherwise ignored - an empty cache is
+   * merely slow, never wrong.
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.searchMissRepository) {
+      return;
+    }
+    try {
+      const rows = await this.searchMissRepository.find();
+      for (const row of rows) {
+        this.searchMisses.set(`${row.game_id}:${row.provider_slug}`, {
+          at: (row.updated_at ?? row.created_at).getTime(),
+          signature: row.signature,
+        });
+      }
+      this.logger.log({
+        message: "Loaded persisted provider search misses.",
+        count: rows.length,
+      });
+    } catch (error) {
+      this.logger.warn({
+        message:
+          "Could not load persisted search misses; continuing with an empty cache. The next metadata lap will be slow but correct.",
+        error,
+      });
+    }
+  }
 
   /**
    * Registers a metadata provider.
@@ -225,11 +268,38 @@ export class MetadataService {
     return true;
   }
 
-  private recordSearchMiss(game: GamevaultGame, providerSlug: string): void {
+  private async recordSearchMiss(
+    game: GamevaultGame,
+    providerSlug: string,
+  ): Promise<void> {
+    const signature = this.searchSignature(game);
     this.searchMisses.set(`${game.id}:${providerSlug}`, {
       at: Date.now(),
-      signature: this.searchSignature(game),
+      signature,
     });
+
+    if (!this.searchMissRepository) {
+      return;
+    }
+    try {
+      // Upsert on the unique (game_id, provider_slug) pair so a re-recorded
+      // miss refreshes updated_at - which is the timestamp the TTL check reads
+      // back on the next boot - rather than colliding.
+      await this.searchMissRepository.upsert(
+        { game_id: game.id, provider_slug: providerSlug, signature },
+        ["game_id", "provider_slug"],
+      );
+    } catch (error) {
+      // Never let a cache write break metadata processing. The in-memory entry
+      // above still stands for this process; the worst case is that the miss
+      // has to be rediscovered after a restart.
+      this.logger.warn({
+        message: "Could not persist a provider search miss.",
+        game: logGamevaultGame(game),
+        provider_slug: providerSlug,
+        error,
+      });
+    }
   }
 
   async addUpdateMetadataJob(gameId: number): Promise<void> {
@@ -622,7 +692,7 @@ export class MetadataService {
         // genuine "not found" is recorded - including a hint whose id no
         // longer resolves, which is also correctly a miss until the filename
         // changes.
-        this.recordSearchMiss(game, provider.slug);
+        await this.recordSearchMiss(game, provider.slug);
         this.logger.debug({
           message: "No matching game found.",
           game: logGamevaultGame(game),

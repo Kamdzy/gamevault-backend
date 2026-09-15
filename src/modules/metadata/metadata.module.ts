@@ -20,6 +20,7 @@ import { TestLowPriorityProviderService } from "./providers/testing/test-low-pri
 import { PublisherMetadata } from "./publishers/publisher.metadata.entity.js";
 import { PublisherMetadataService } from "./publishers/publisher.metadata.service.js";
 import { PublisherController as PublishersController } from "./publishers/publishers.metadata.controller.js";
+import { MetadataSearchMiss } from "./search-miss/metadata-search-miss.entity.js";
 import { TagMetadata } from "./tags/tag.metadata.entity.js";
 import { TagMetadataService } from "./tags/tag.metadata.service.js";
 import { TagsController } from "./tags/tags.metadata.controller.js";
@@ -32,6 +33,7 @@ import { TagsController } from "./tags/tags.metadata.controller.js";
       GenreMetadata,
       PublisherMetadata,
       TagMetadata,
+      MetadataSearchMiss,
     ]),
     forwardRef(() => GamesModule),
     MediaModule,

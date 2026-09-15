@@ -1342,3 +1342,149 @@ describe("Fork delta: a search that found nothing is remembered", () => {
     expect(mapSpy).toHaveBeenCalledWith(14, "dlsite", "RJ01000003");
   });
 });
+
+/**
+ * Note: there is deliberately no standalone "works without a repository" test.
+ * The guard it would cover is redundant - the try/catch around the upsert
+ * already absorbs the TypeError - so such a test cannot fail, and a contract
+ * test that cannot fail guards nothing. That path is exercised anyway by every
+ * other test in this file, all of which construct MetadataService with three
+ * arguments and no repository.
+ */
+describe("Fork delta: search misses survive a restart", () => {
+  let gamesService: any;
+  let repo: any;
+
+  function makeService(repository: any) {
+    return new MetadataService(
+      gamesService,
+      { save: vi.fn(), deleteByGameMetadataIdOrFail: vi.fn() } as any,
+      configuration as any,
+      repository,
+    );
+  }
+
+  function missingProvider(slug: string) {
+    const provider = createMockProvider({ slug, priority: 10 });
+    (provider.getBestMatch as Mock).mockRejectedValue(
+      new NotFoundException("no match"),
+    );
+    return provider;
+  }
+
+  const GAME = {
+    id: 21,
+    title: "Some Game",
+    version: "1.0",
+    versions: [],
+    file_path: "/games/Some Game (v1.0) (W_P) (2026).7z",
+    provider_metadata: [],
+  };
+
+  beforeEach(() => {
+    gamesService = {
+      findOneByGameIdOrFail: vi.fn().mockResolvedValue(GAME),
+      save: vi.fn().mockImplementation((g) => Promise.resolve(g)),
+      generateSortTitle: vi.fn().mockReturnValue("sort-title"),
+    };
+    repo = {
+      find: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn().mockResolvedValue(undefined),
+    };
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * The whole point of persisting. In-memory only, every restart replayed a
+   * full-price lap: ~17k searches at ~935/hour before anything got faster.
+   */
+  it("does not re-search a miss that was persisted before the restart", async () => {
+    const service = makeService(repo);
+    vi.spyOn(service, "merge").mockResolvedValue({} as any);
+    const provider = missingProvider("dlsite");
+    service.registerProvider(provider);
+
+    repo.find.mockResolvedValue([
+      {
+        game_id: 21,
+        provider_slug: "dlsite",
+        signature: "Some Game|1.0",
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+    ]);
+
+    await service.onModuleInit();
+    await service.addUpdateMetadataJob(21);
+    await drainMetadataQueue(service);
+
+    expect(provider.getBestMatch).not.toHaveBeenCalled();
+  });
+
+  /** A signature that no longer matches must be ignored, even from the DB. */
+  it("re-searches when the persisted signature is stale", async () => {
+    const service = makeService(repo);
+    vi.spyOn(service, "merge").mockResolvedValue({} as any);
+    const provider = missingProvider("dlsite");
+    service.registerProvider(provider);
+
+    repo.find.mockResolvedValue([
+      {
+        game_id: 21,
+        provider_slug: "dlsite",
+        signature: "Some Game|0.9-OLD",
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+    ]);
+
+    await service.onModuleInit();
+    await service.addUpdateMetadataJob(21);
+    await drainMetadataQueue(service);
+
+    expect(provider.getBestMatch).toHaveBeenCalledTimes(1);
+  });
+
+  /** A new miss must reach the table, keyed so a re-record refreshes it. */
+  it("writes a new miss through to the repository", async () => {
+    const service = makeService(repo);
+    vi.spyOn(service, "merge").mockResolvedValue({} as any);
+    service.registerProvider(missingProvider("dlsite"));
+
+    await service.onModuleInit();
+    await service.addUpdateMetadataJob(21);
+    await drainMetadataQueue(service);
+
+    expect(repo.upsert).toHaveBeenCalledWith(
+      { game_id: 21, provider_slug: "dlsite", signature: "Some Game|1.0" },
+      ["game_id", "provider_slug"],
+    );
+  });
+
+  /**
+   * This is a cache. A database problem may cost a slow lap; it must never
+   * stop metadata processing or escape as an error.
+   */
+  it("contains a repository failure instead of aborting the provider", async () => {
+    repo.upsert.mockRejectedValue(new Error("database is gone"));
+    const service = makeService(repo);
+    const mergeSpy = vi.spyOn(service, "merge").mockResolvedValue({} as any);
+    const provider = missingProvider("dlsite");
+    service.registerProvider(provider);
+
+    await service.onModuleInit();
+    await service.addUpdateMetadataJob(21);
+    await drainMetadataQueue(service);
+
+    // The tell that the write failure was swallowed rather than thrown: the
+    // provider loop ran to completion and reached the merge. Let it escape and
+    // updateMetadata's per-provider catch takes over instead, skipping it.
+    expect(mergeSpy).toHaveBeenCalledWith(21);
+
+    // And the miss still took effect in memory for this process.
+    await service.addUpdateMetadataJob(21);
+    await drainMetadataQueue(service);
+    expect(provider.getBestMatch).toHaveBeenCalledTimes(1);
+  });
+});
