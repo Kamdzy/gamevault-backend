@@ -94,6 +94,9 @@ export class MetadataService implements OnModuleInit {
     { at: number; signature: string }
   >();
 
+  /** Caps the temporary lookup diagnostic below so it cannot flood the log. */
+  private searchMissLookupLogs = 0;
+
   constructor(
     @Inject(forwardRef(() => GamesService))
     // Cyclic service reference (ESM): intentionally loosely typed to avoid design:paramtypes TDZ
@@ -130,6 +133,10 @@ export class MetadataService implements OnModuleInit {
       this.logger.log({
         message: "Loaded persisted provider search misses.",
         count: rows.length,
+        // Diagnostic: rows read vs entries actually in the map. A gap means
+        // keys collided; equality rules the loader out entirely.
+        cache_size: this.searchMisses.size,
+        sample_key: this.searchMisses.keys().next().value ?? "(empty)",
       });
     } catch (error) {
       this.logger.warn({
@@ -249,6 +256,19 @@ export class MetadataService implements OnModuleInit {
     const key = `${game.id}:${providerSlug}`;
     const miss = this.searchMisses.get(key);
     if (!miss) {
+      // Diagnostic, capped so it cannot flood: print the key we looked for
+      // next to the map's size and one key it actually holds. If the size is 0
+      // the load never reached this instance; if the size is right but the
+      // sample key has a different shape, the key construction is wrong.
+      if (this.searchMissLookupLogs < 5) {
+        this.searchMissLookupLogs++;
+        this.logger.log({
+          message: "Search-miss lookup found no entry.",
+          looked_for: key,
+          cache_size: this.searchMisses.size,
+          sample_key: this.searchMisses.keys().next().value ?? "(empty)",
+        });
+      }
       return false;
     }
     // The game was renamed or re-versioned: this miss answered a different
@@ -331,6 +351,12 @@ export class MetadataService implements OnModuleInit {
       message: "Metadata queue started.",
       queue_size: totalJobs,
       heap_mb: heapMB(),
+      // Diagnostic: the skip did not fire at all on the first deploy of the
+      // persisted cache, despite 85 of 132 searched pairs being present in the
+      // table with byte-identical signatures. Everything checkable from
+      // outside the process matched, so the open question is whether THIS
+      // instance's map is actually populated when the queue runs.
+      search_miss_cache_size: this.searchMisses.size,
     });
 
     while (this.metadataJobs.size > 0) {
