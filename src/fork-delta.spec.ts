@@ -1267,7 +1267,7 @@ describe("Fork delta: a search that found nothing is remembered", () => {
     await drainMetadataQueue(service);
 
     // The operator renamed the file to carry a DLSite id.
-    game.version = "1.0-RJ01540609";
+    game.version = "1.0-RJ01000003";
 
     await service.addUpdateMetadataJob(12);
     await drainMetadataQueue(service);
@@ -1330,7 +1330,7 @@ describe("Fork delta: a search that found nothing is remembered", () => {
       provider_metadata: [
         {
           provider_slug: "dlsite",
-          provider_data_id: "RJ01540609",
+          provider_data_id: "RJ01000003",
           updated_at: new Date("2000-01-01"), // far outside TTL
         },
       ],
@@ -1339,6 +1339,6 @@ describe("Fork delta: a search that found nothing is remembered", () => {
     await service.addUpdateMetadataJob(14);
     await drainMetadataQueue(service);
 
-    expect(mapSpy).toHaveBeenCalledWith(14, "dlsite", "RJ01540609");
+    expect(mapSpy).toHaveBeenCalledWith(14, "dlsite", "RJ01000003");
   });
 });
