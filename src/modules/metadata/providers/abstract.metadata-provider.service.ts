@@ -155,8 +155,14 @@ export abstract class MetadataProvider
     game: GamevaultGame,
   ): Promise<MinimalGameMetadataDto> {
     // Search for the game using all available metadata providers but remove Edition Tags in the search.
+    // Fork: upstream's strict-TS refactor (ee7f0a6) dropped the bracket strip
+    // from d8edecb, so `Forza Horizon 6 [Multiplayer]` was sent verbatim and
+    // found nothing. Restored; guarded by fork-delta-search.spec.ts.
     const gameResults = await this.search(
-      (game.title ?? "").replaceAll("  ", " ").trim(),
+      (game.title ?? "")
+        .replace(/\[.*?\]/g, "")
+        .replaceAll("  ", " ")
+        .trim(),
     );
 
     // If no matching games are found, throw an exception.
