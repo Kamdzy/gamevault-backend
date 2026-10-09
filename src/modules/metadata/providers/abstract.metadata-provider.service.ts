@@ -158,12 +158,14 @@ export abstract class MetadataProvider
     // Fork: upstream's strict-TS refactor (ee7f0a6) dropped the bracket strip
     // from d8edecb, so `Forza Horizon 6 [Multiplayer]` was sent verbatim and
     // found nothing. Restored; guarded by fork-delta-search.spec.ts.
-    const gameResults = await this.search(
-      (game.title ?? "")
-        .replace(/\[.*?\]/g, "")
-        .replaceAll("  ", " ")
-        .trim(),
-    );
+    // Innermost tags are stripped repeatedly so a nested `[A [B]]` leaves no
+    // stray `]`, and any whitespace run collapses, so two tags mid-title
+    // (`Foo [A] [B] Bar`) do not leave a double space.
+    let query = game.title ?? "";
+    while (/\[[^[\]]*\]/.test(query)) {
+      query = query.replace(/\[[^[\]]*\]/g, "");
+    }
+    const gameResults = await this.search(query.replace(/\s+/g, " ").trim());
 
     // If no matching games are found, throw an exception.
     if (gameResults.length === 0) {

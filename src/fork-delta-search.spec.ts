@@ -61,4 +61,16 @@ describe("Fork delta: provider search strips edition tags", () => {
     } as any);
     expect(p.queries).toEqual(["Kimi ga Nozomu Eien Latest"]);
   });
+
+  it("leaves a single space between two tags in the middle of a title", async () => {
+    const p = provider();
+    await p.getBestMatch({ title: "Foo [Deluxe] [Multiplayer] Bar" } as any);
+    expect(p.queries).toEqual(["Foo Bar"]);
+  });
+
+  it("strips nested tags without leaving a stray bracket", async () => {
+    const p = provider();
+    await p.getBestMatch({ title: "Foo [Edition [Remastered]] Bar" } as any);
+    expect(p.queries).toEqual(["Foo Bar"]);
+  });
 });
