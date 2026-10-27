@@ -17,7 +17,16 @@ import { GameType } from "./models/game-type.enum.js";
 @Unique("UQ_b0b88b548562b921436bdacea35", ["game", "file_path"])
 export class GameVersion extends DatabaseEntity {
   @Index()
-  @ManyToOne(() => GamevaultGame, { nullable: false, onDelete: "CASCADE" })
+  // Fork: "disable" stops a game save from diffing `versions` at all.
+  // Otherwise a game loaded without versions (@AfterLoad makes them []) or
+  // before the indexer added one hard-DELETEs every row it lacks, because a
+  // NOT NULL FK turns TypeORM's default "nullify" into a delete. Versions are
+  // only ever written through the GameVersion repository.
+  @ManyToOne(() => GamevaultGame, {
+    nullable: false,
+    onDelete: "CASCADE",
+    orphanedRowAction: "disable",
+  })
   @JoinColumn({ name: "game_id" })
   @ApiProperty({
     description: "game associated with this version",

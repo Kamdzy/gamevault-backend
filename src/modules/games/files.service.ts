@@ -1721,7 +1721,15 @@ export class FilesService implements OnApplicationBootstrap {
 
     // Increment the download count.
     game.download_count++;
-    await this.gamesService.save(game);
+    // Fork: persist only the counter. The game was loaded without relations,
+    // and @AfterLoad turned the unloaded provider_metadata into [], so saving
+    // the entity would unlink every provider mapping.
+    await this.gamesService.save(
+      Object.assign(new GamevaultGame(), {
+        id: game.id,
+        download_count: game.download_count,
+      }),
+    );
 
     const originalFilename = path.basename(fileDownloadPath);
     const downloadFilename = globals.ARCHIVE_FORMATS.includes(
