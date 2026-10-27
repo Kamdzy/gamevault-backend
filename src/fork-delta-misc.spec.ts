@@ -113,6 +113,8 @@ describe("Fork delta: login IP falls back to x-forwarded-for", () => {
       authenticationService as unknown as AuthenticationService,
     );
     const res = {
+      // upstream 17.1.0 sets Cache-Control: no-store on the token response
+      set: vi.fn().mockReturnThis(),
       status: vi.fn().mockReturnThis(),
       contentType: vi.fn().mockReturnThis(),
       send: vi.fn().mockReturnThis(),

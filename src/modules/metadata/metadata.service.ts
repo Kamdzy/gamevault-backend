@@ -12,7 +12,7 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { validateOrReject } from "class-validator";
 import lodash from "lodash";
-import { setTimeout } from "timers/promises";
+import { setTimeout } from "node:timers/promises";
 import { Repository } from "typeorm";
 import type { AppConfiguration } from "../../configuration.js";
 import { InjectGamevaultConfig } from "../../decorators/inject-gamevault-config.decorator.js";
@@ -171,12 +171,12 @@ export class MetadataService implements OnModuleInit {
     }
 
     // Validate the provider using class-validator
-    validateOrReject(provider).catch((errors) => {
+    validateOrReject(provider).catch((error_) => {
       this.logger.error({
         message: `Failed to register metadata provider due to validation errors.`,
         provider: logMetadataProvider(provider),
       });
-      console.error(errors);
+      console.error(error_);
     });
 
     // Add the provider to the list of providers
@@ -1157,9 +1157,7 @@ export class MetadataService implements OnModuleInit {
   ): GameMetadata {
     if (!game.user_metadata) return base;
 
-    const userMetadata = JSON.parse(
-      JSON.stringify(game.user_metadata),
-    ) as GameMetadata;
+    const userMetadata = structuredClone(game.user_metadata) as GameMetadata;
 
     return {
       ...base,
@@ -1199,9 +1197,7 @@ export class MetadataService implements OnModuleInit {
     const result = { ...obj } as Record<string, unknown>;
     for (const key of Object.keys(result)) {
       const value = result[key];
-      if (value == null) {
-        delete result[key];
-      } else if (Array.isArray(value) && value.length === 0) {
+      if (value == null || (Array.isArray(value) && value.length === 0)) {
         delete result[key];
       }
     }

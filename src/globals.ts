@@ -55,9 +55,7 @@ function pathsToFindOptionsTree(paths: readonly string[]): FindOptionsTree {
         continue;
       }
 
-      if (existing === true) {
-        current[segment] = {};
-      } else if (existing == null) {
+      if (existing === true || existing == null) {
         current[segment] = {};
       }
 
@@ -189,6 +187,11 @@ export interface FindOptions {
    */
   filterByAge?: number;
 }
+
+export const DEFAULT_METADATA_OPTIONS: FindOptions = {
+  loadDeletedEntities: false,
+  loadRelations: false,
+};
 
 export interface GameVaultPluginModule {
   metadata: GameVaultPluginModuleMetadataV1;

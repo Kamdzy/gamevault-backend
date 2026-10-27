@@ -3,8 +3,7 @@ import { Cron } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import { isUUID } from "class-validator";
 import fsExtra from "fs-extra";
-import lodash from "lodash";
-import { join } from "path";
+import { join } from "node:path";
 import { Repository } from "typeorm";
 import configuration from "../../configuration.js";
 import { Media } from "../media/media.entity.js";
@@ -12,8 +11,6 @@ import { MediaService } from "../media/media.service.js";
 import { GameMetadata } from "../metadata/games/game.metadata.entity.js";
 import { GamevaultUser } from "../users/gamevault-user.entity.js";
 const { readdir, remove } = fsExtra;
-
-const { uniq } = lodash;
 
 @Injectable()
 export class MediaGarbageCollectionService implements OnApplicationBootstrap {
@@ -179,8 +176,8 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
     allMedia: Media[],
     usedMediaPaths: string[],
   ): Promise<number> {
-    const uniqueAllMedia = uniq(allMedia);
-    const uniqueUsedMediaPaths = uniq(usedMediaPaths);
+    const uniqueAllMedia = [...new Set(allMedia)];
+    const uniqueUsedMediaPaths = [...new Set(usedMediaPaths)];
     this.logger.log({
       message: "Calculated difference of all media paths and used media paths.",
       all_count: uniqueAllMedia.length,
@@ -194,11 +191,13 @@ export class MediaGarbageCollectionService implements OnApplicationBootstrap {
     // which blocked all HTTP traffic for ~13 minutes on the first run after
     // the isUUID fix made this sweep functional. A Set makes it O(n).
     const usedMediaPathSet = new Set(uniqueUsedMediaPaths);
-    const uniqueUnusedMedia = uniq(
-      uniqueAllMedia.filter(
-        (media) => !usedMediaPathSet.has(media.file_path ?? ""),
+    const uniqueUnusedMedia = [
+      ...new Set(
+        uniqueAllMedia.filter(
+          (media) => !usedMediaPathSet.has(media.file_path ?? ""),
+        ),
       ),
-    );
+    ];
 
     // Create an array of promises to delete the unused media
     const deletePromises = uniqueUnusedMedia.map((media) =>
