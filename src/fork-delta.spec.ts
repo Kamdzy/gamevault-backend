@@ -1120,12 +1120,33 @@ describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
     findUserForAuthOrFail: Mock;
     findOneByUsernameOrFail: Mock;
   };
+  let authService: { isSessionActive: Mock };
   let strategy: any;
   const payload = {
     sub: "1",
     preferred_username: "u",
     email: "u@example.com",
   };
+
+  async function makeStrategy(sessionBinding: boolean) {
+    const { AuthenticationStrategy } = (await vi.importActual(
+      "./modules/auth/strategies/authentication.strategy.js",
+    )) as {
+      AuthenticationStrategy: new (
+        users: unknown,
+        auth: unknown,
+        cfg: unknown,
+      ) => unknown;
+    };
+    return new AuthenticationStrategy(usersService, authService, {
+      AUTH: {
+        ACCESS_TOKEN: {
+          SECRET: "test-secret",
+          SESSION_BINDING_ENABLED: sessionBinding,
+        },
+      },
+    });
+  }
 
   beforeEach(async () => {
     usersService = {
@@ -1134,14 +1155,8 @@ describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
         .fn()
         .mockResolvedValue({ id: 1, username: "u" }),
     };
-    const { AuthenticationStrategy } = (await vi.importActual(
-      "./modules/auth/strategies/authentication.strategy.js",
-    )) as {
-      AuthenticationStrategy: new (svc: unknown, cfg: unknown) => unknown;
-    };
-    strategy = new AuthenticationStrategy(usersService as unknown, {
-      AUTH: { ACCESS_TOKEN: { SECRET: "test-secret" } },
-    });
+    authService = { isSessionActive: vi.fn().mockResolvedValue(true) };
+    strategy = await makeStrategy(false);
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -1176,6 +1191,22 @@ describe("Fork delta: AuthenticationStrategy caches the user briefly", () => {
     });
 
     expect(usersService.findUserForAuthOrFail).toHaveBeenCalledTimes(2);
+  });
+
+  // Upstream 17.2.0 added session binding. Its revocation check must run
+  // before the cache, or a revoked session keeps authenticating for up to
+  // the 60s TTL on the strength of a cached user.
+  it("rejects a revoked session even while its user is cached", async () => {
+    strategy = await makeStrategy(true);
+    const sessionPayload = { ...payload, sid: "7" };
+
+    await strategy.validate({ payload: sessionPayload });
+    authService.isSessionActive.mockResolvedValue(false);
+
+    await expect(
+      strategy.validate({ payload: sessionPayload }),
+    ).rejects.toThrow(/Session has been revoked/);
+    expect(usersService.findUserForAuthOrFail).toHaveBeenCalledTimes(1);
   });
 });
 
