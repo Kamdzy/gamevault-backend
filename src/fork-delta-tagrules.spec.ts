@@ -146,7 +146,12 @@ describe("Fork delta: tag rules loader", () => {
   });
 
   it("skips malformed alias lines rather than failing the load", () => {
-    writeAliases("no-tab-here", "\tmissing variant", "ADV\t", "VN\tVisual Novel");
+    writeAliases(
+      "no-tab-here",
+      "\tmissing variant",
+      "ADV\t",
+      "VN\tVisual Novel",
+    );
     const rules = getTagRules(dir);
     expect(rules.aliases.size).toBe(1);
     expect(resolveTagName("VN", rules)).toBe("Visual Novel");
@@ -235,7 +240,10 @@ describe("Fork delta: tag rules applied during merge", () => {
 
   it("is inert when no rule files exist", () => {
     const merged = apply([
-      { provider_slug: "high", tags: [{ name: "Steam Cloud" }, { name: "ADV" }] },
+      {
+        provider_slug: "high",
+        tags: [{ name: "Steam Cloud" }, { name: "ADV" }],
+      },
     ]);
     expect(merged.tags.map((t: any) => t.name)).toEqual(["Steam Cloud", "ADV"]);
   });

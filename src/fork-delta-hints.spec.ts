@@ -346,7 +346,9 @@ describe("fork: version-tag id hints", () => {
     );
 
     expect(provider.getByProviderDataIdOrFail).toHaveBeenCalledWith("R67890");
-    expect(provider.getByProviderDataIdOrFail).not.toHaveBeenCalledWith("12345");
+    expect(provider.getByProviderDataIdOrFail).not.toHaveBeenCalledWith(
+      "12345",
+    );
     expect(mapSpy).toHaveBeenCalledWith(20, "test-provider", "R67890");
   });
 
